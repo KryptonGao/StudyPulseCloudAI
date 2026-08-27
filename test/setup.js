@@ -30,7 +30,9 @@ import migration16Sql from "../migrations/0016_create_feedback_tickets.sql?raw";
 import migration17Sql from "../migrations/0017_unified_identity.sql?raw";
 import migration18Sql from "../migrations/0018_auth_challenges.sql?raw";
 import migration19Sql from "../migrations/0019_create_contribution_tickets.sql?raw";
+import migration20Sql from "../migrations/0020_update_membership_quotas.sql?raw";
 import migration21Sql from "../migrations/0021_create_passkeys.sql?raw";
+import migration22Sql from "../migrations/0022_update_membership_quotas.sql?raw";
 
 const allMigrations = [
 	migration1Sql,  // 0001: api_keys
@@ -52,7 +54,9 @@ const allMigrations = [
 	migration17Sql, // 0017: unified identity and refresh sessions
 	migration18Sql, // 0018: short-lived auth challenges
 	migration19Sql, // 0019: code contribution review tickets
+	migration20Sql, // 0020: membership quota update
 	migration21Sql, // 0021: passkey credentials and enrollment prompt state
+	migration22Sql, // 0022: membership quota update
 ];
 
 // 与 v0.2 内存 Set 时期一致的 Beta Key，保证旧测试不破
