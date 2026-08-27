@@ -613,7 +613,7 @@ async function showUserDetail(userId) {
         '<div><strong>Passkey</strong><p>' + (user.passkey_bound ? "已绑定（" + user.passkey_count + " 个）" : "未绑定") + '</p></div>' +
         '<div><strong>角色</strong><p><select id="editRole" class="input-sm" onchange="updateUserField(\'' + userId + '\', \'role\', this.value)"><option value="user"' + (user.role==="user"?" selected":"") + '>用户</option><option value="admin"' + (user.role==="admin"?" selected":"") + '>管理员</option></select></p></div>' +
         '<div><strong>会员</strong><p><select id="editMember" class="input-sm" onchange="updateUserField(\'' + userId + '\', \'membership_type\', this.value)"><option value="free"' + (user.membership_type==="free"?" selected":"") + '>Free</option><option value="plus"' + (user.membership_type==="plus"?" selected":"") + '>Plus</option><option value="pro"' + (user.membership_type==="pro"?" selected":"") + '>Pro</option></select></p></div>' +
-        '<div><strong>到期时间</strong><p>' + (user.membership_expires_at ? formatDate(user.membership_expires_at) : "永久") + '</p></div>' +
+        '<div><strong>到期时间</strong><div class="expire-edit"><input type="datetime-local" id="editExpires" class="input-sm" value="' + escapeHtml(toDatetimeLocalShanghai(user.membership_expires_at)) + '" onchange="updateMembershipExpires(\'' + userId + '\', this.value)"><button type="button" class="btn btn-sm btn-outline" onclick="clearMembershipExpires(\'' + userId + '\')">永久</button></div><p class="text-muted" style="font-size:11px">北京时间，空值表示永久有效</p></div>' +
         '<div><strong>注册时间</strong><p>' + formatDate(user.created_at) + '</p></div>' +
         '<div><strong>今日请求</strong><p>' + (stats ? stats.dailyRequests : "-") + '</p></div>' +
         '<div><strong>月Token</strong><p>' + (stats ? stats.monthlyTokens.toLocaleString() : "-") + '</p></div>' +
@@ -665,9 +665,25 @@ async function updateUserField(userId, field, value) {
     body[field] = value;
     await apiJson("POST", "/api/admin/users/update", body);
     showToast("更新成功", "success");
+    loadUsers();
   } catch (e) {
     showToast("更新失败: " + e.message, "error");
   }
+}
+
+async function updateMembershipExpires(userId, value) {
+  const iso = datetimeLocalShanghaiToIso(value);
+  if (value && !iso) {
+    showToast("到期时间格式无效", "error");
+    return;
+  }
+  await updateUserField(userId, "membership_expires_at", iso);
+}
+
+async function clearMembershipExpires(userId) {
+  const input = document.getElementById("editExpires");
+  if (input) input.value = "";
+  await updateUserField(userId, "membership_expires_at", null);
 }
 
 function showUserKeyModal(userId) {
@@ -940,20 +956,47 @@ function escapeHtml(s) {
   return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
+function parseAdminDate(s) {
+  if (!s) return null;
+  const value = String(s).trim();
+  // D1/CURRENT_TIMESTAMP returns a timezone-less UTC timestamp. Add the
+  // UTC designator before parsing so the browser does not treat it as local
+  // time (the value stored in the database remains unchanged).
+  const utcValue = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)?$/.test(value)
+    ? value.replace(" ", "T") + "Z"
+    : value;
+  const d = new Date(utcValue);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
 function formatDate(s) {
   if (!s) return "-";
-  try {
-    // D1/CURRENT_TIMESTAMP returns a timezone-less UTC timestamp. Add the
-    // UTC designator before parsing so the browser does not treat it as local
-    // time (the value stored in the database remains unchanged).
-    const value = String(s).trim();
-    const utcValue = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)?$/.test(value)
-      ? value.replace(" ", "T") + "Z"
-      : value;
-    const d = new Date(utcValue);
-    if (Number.isNaN(d.getTime())) return s;
-    return d.toLocaleString("zh-CN", { timeZone: "Asia/Shanghai", hour12: false });
-  } catch (e) { return s; }
+  const d = parseAdminDate(s);
+  if (!d) return s;
+  return d.toLocaleString("zh-CN", { timeZone: "Asia/Shanghai", hour12: false });
+}
+
+function toDatetimeLocalShanghai(s) {
+  const d = parseAdminDate(s);
+  if (!d) return "";
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Shanghai",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(d);
+  const get = (type) => parts.find((p) => p.type === type)?.value || "";
+  return get("year") + "-" + get("month") + "-" + get("day") + "T" + get("hour") + ":" + get("minute");
+}
+
+function datetimeLocalShanghaiToIso(value) {
+  if (!value) return null;
+  const normalized = value.length === 16 ? value + ":00" : value;
+  const d = new Date(normalized + "+08:00");
+  return Number.isNaN(d.getTime()) ? null : d.toISOString();
 }
 
 // Close modals on overlay click

@@ -359,6 +359,51 @@ describe("Admin API - 用户认证状态", () => {
 	});
 });
 
+describe("Admin API - 更新用户会员到期时间", () => {
+	it("可以设置和清空会员到期时间", async () => {
+		const userId = crypto.randomUUID();
+		const email = `${userId}@example.com`;
+		await env.StudyPulseDB.prepare(
+			"INSERT INTO users (id,email,email_normalized,email_verified,membership_type) VALUES (?,?,?,1,'plus')",
+		).bind(userId, email, email).run();
+
+		const expiresAt = "2026-09-01T14:00:00.000Z";
+		const updateRes = await adminFetch("/api/admin/users/update", {
+			method: "POST",
+			body: { id: userId, membership_expires_at: expiresAt },
+			csrfCookie: "test-csrf",
+		});
+		expect(updateRes.status).toBe(200);
+
+		const updated = await env.StudyPulseDB.prepare(
+			"SELECT membership_expires_at FROM users WHERE id = ?",
+		).bind(userId).first();
+		expect(new Date(updated.membership_expires_at).toISOString()).toBe(expiresAt);
+
+		const clearRes = await adminFetch("/api/admin/users/update", {
+			method: "POST",
+			body: { id: userId, membership_expires_at: null },
+			csrfCookie: "test-csrf",
+		});
+		expect(clearRes.status).toBe(200);
+
+		const cleared = await env.StudyPulseDB.prepare(
+			"SELECT membership_expires_at FROM users WHERE id = ?",
+		).bind(userId).first();
+		expect(cleared.membership_expires_at).toBeNull();
+	});
+
+	it("非法到期时间返回 400", async () => {
+		const res = await adminFetch("/api/admin/users/update", {
+			method: "POST",
+			body: { id: seedUserId, membership_expires_at: "not-a-date" },
+			csrfCookie: "test-csrf",
+		});
+		expect(res.status).toBe(400);
+		expect((await res.json()).error).toBe("membership_expires_at is invalid");
+	});
+});
+
 describe("Admin API - 删除用户", () => {
 	it("删除用户及关联数据，并返回邮件发送状态", async () => {
 		const userId = crypto.randomUUID();

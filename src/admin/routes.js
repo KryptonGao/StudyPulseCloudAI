@@ -537,7 +537,17 @@ async function handleUpdateUser(request, env) {
 	if (body.role !== undefined) fields.role = body.role;
 	if (body.membership_type !== undefined) fields.membership_type = body.membership_type;
 	if (body.membership_expires_at !== undefined) {
-		fields.membership_expires_at = body.membership_expires_at;
+		if (body.membership_expires_at === null || body.membership_expires_at === "") {
+			fields.membership_expires_at = null;
+		} else if (typeof body.membership_expires_at !== "string") {
+			return error("membership_expires_at must be an ISO datetime or null", 400);
+		} else {
+			const expiresAt = new Date(body.membership_expires_at);
+			if (Number.isNaN(expiresAt.getTime())) {
+				return error("membership_expires_at is invalid", 400);
+			}
+			fields.membership_expires_at = expiresAt.toISOString();
+		}
 	}
 
 	if (Object.keys(fields).length === 0) {
@@ -552,6 +562,7 @@ async function handleUpdateUser(request, env) {
 		admin_user_id: "admin_system",
 		action: fields.role !== undefined ? "change_role"
 			: fields.membership_type !== undefined ? "change_membership"
+			: fields.membership_expires_at !== undefined ? "change_membership_expires"
 			: "update_user",
 		target_user_id: id,
 		details: JSON.stringify(fields),
