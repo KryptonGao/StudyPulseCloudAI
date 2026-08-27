@@ -50,13 +50,37 @@ function refreshPage() {
   if (PAGE === "/feedback") return loadFeedback();
   return loadDashboard();
 }
+function beginRefresh() {
+  const button = $("refreshButton");
+  const status = $("lastUpdated");
+  if (button) {
+    button.disabled = true;
+    button.classList.add("is-loading");
+  }
+  if (status) status.textContent = "正在更新…";
+}
+function finishRefresh(ok = true) {
+  const button = $("refreshButton");
+  const status = $("lastUpdated");
+  if (button) {
+    button.disabled = false;
+    button.classList.remove("is-loading");
+  }
+  if (status) {
+    status.textContent = ok
+      ? "更新于 " + new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false })
+      : "更新失败";
+  }
+}
 function setApp(html) {
   $("app").className = "";
   $("app").innerHTML = html;
+  finishRefresh();
 }
 function setError(error) {
   $("app").className = "loading error-text";
   $("app").innerHTML = esc(error.message || "加载失败");
+  finishRefresh(false);
   if (/Session|Unauthorized|Invalid/i.test(error.message || "")) login();
 }
 function applyAccountChrome(user, subscription) {
@@ -69,45 +93,78 @@ function quotaPct(used, limit) {
   if (limit == null) return 0;
   return Math.min(100, Math.round((Number(used || 0) / limit) * 100));
 }
-function quotaText(used, limit) {
-  return num(used) + " / " + (limit == null ? "∞" : num(limit));
-}
 function planLabel(s) {
   if (!s) return "";
-  if (s.status === "expired") return (s.type || "Plus").toUpperCase() + " · 已到期";
-  return s.plan || (s.effective_type || s.type || "Free");
-}
-function planRows(s) {
-  const type = (s.type || "free").toLowerCase();
-  if (type === "free") {
-    return kv("套餐", esc(s.plan || "Free")) + kv("到期", "无到期");
-  }
-  if (s.status === "expired") {
-    const name = (s.type || "plus").toUpperCase();
-    return kv("套餐", esc(name) + " 已到期") + kv("说明", esc(name) + " 已于 " + day(s.expire_time) + " 到期，当前按 Free 额度计");
-  }
-  return kv("套餐", esc(s.plan || s.type)) + kv("有效至", day(s.expire_time));
+  return s.plan || (s.effective_type || s.type || "Free").toUpperCase();
 }
 function kv(label, value, extra) {
   return '<div class="kv"><span>' + label + "</span><strong" + (extra ? ' class="' + extra + '"' : "") + ">" + value + "</strong></div>";
 }
+function trendMarkup(rawPoints) {
+  const all = Array.isArray(rawPoints) ? rawPoints.slice(-14) : [];
+  const points = all.slice(-7);
+  const previous = all.slice(-14, -7).reduce((sum, point) => sum + Number(point.tokens || 0), 0);
+  const current = points.reduce((sum, point) => sum + Number(point.tokens || 0), 0);
+  const peak = Math.max(1, ...points.map((point) => Number(point.tokens || 0)));
+  let compare = "近两周暂无用量";
+  let compareClass = "";
+  if (previous > 0) {
+    const change = Math.round(((current - previous) / previous) * 100);
+    compare = "较前 7 天 " + (change > 0 ? "+" : "") + change + "%";
+    compareClass = change > 0 ? "up" : change < 0 ? "down" : "";
+  } else if (current > 0) {
+    compare = "前 7 天无用量";
+  }
+  const columns = points
+    .map((point) => {
+      const tokens = Number(point.tokens || 0);
+      const height = tokens ? Math.max(4, (tokens / peak) * 100) : 2;
+      const label = String(point.day || "").slice(5).replace("-", "/");
+      return (
+        '<div class="trend-column" title="' + esc(point.day) + " · " + num(tokens) + ' Token">' +
+        '<div class="trend-bar-track"><i class="trend-bar" style="height:' + height + '%"></i></div>' +
+        '<span class="trend-day">' + esc(label) + "</span></div>"
+      );
+    })
+    .join("");
+  return (
+    '<div class="usage-trend"><div class="trend-head"><span class="trend-title">近 7 天 Token · ' + num(current) + "</span>" +
+    '<span class="trend-compare ' + compareClass + '">' + compare + "</span></div>" +
+    '<div class="trend-chart" role="img" aria-label="近 7 天 Token 用量趋势">' + columns + "</div></div>"
+  );
+}
+function quotaMarkup(label, used, limit, note) {
+  const amount = Number(used || 0);
+  if (limit == null) {
+    return '<div class="quota-item"><span class="quota-label">' + label + '</span><div class="quota-value">不限</div><div class="quota-meta">已用 ' + num(amount) + " · " + note + "</div></div>";
+  }
+  const total = Number(limit);
+  const remaining = Math.max(0, total - amount);
+  const exceeded = amount > total;
+  const value = exceeded ? "已超出 " + num(amount - total) : "剩余 " + num(remaining);
+  return (
+    '<div class="quota-item"><span class="quota-label">' + label + '</span><div class="quota-value' + (exceeded ? " danger" : "") + '">' + value + "</div>" +
+    '<div class="quota-meta">共 ' + num(total) + " · 已用 " + num(amount) + " · " + note + "</div>" +
+    '<div class="meter' + (exceeded ? " exceeded" : "") + '"><span style="width:' + quotaPct(amount, total) + '%"></span></div></div>'
+  );
+}
 
 async function loadDashboard() {
   activateNav();
-  $("pageTitle").textContent = "Overview";
+  beginRefresh();
+  $("pageTitle").textContent = "概览";
   try {
     const d = (await api("/api/user/dashboard")).data;
     const u = d.user;
     const s = d.subscription;
     const t = d.usage;
+    const quota = t.quota || { day: { requests: t.today.requests }, month: { tokens: t.month.tokens } };
     applyAccountChrome(u, s);
     const inTok = Number(t.month.input_tokens || 0);
     const outTok = Number(t.month.output_tokens || 0);
     const splitTotal = inTok + outTok;
     const inPct = splitTotal ? (inTok / splitTotal) * 100 : 0;
     const outPct = splitTotal ? (outTok / splitTotal) * 100 : 0;
-    const dp = quotaPct(t.today.requests, s.daily_request_limit);
-    const mp = quotaPct(t.month.tokens, s.monthly_token_limit);
     const calls = d.recent_calls || [];
     const rows = calls.length
       ? calls
@@ -126,48 +183,66 @@ async function loadDashboard() {
               num(x.tokens) +
               '</td><td class="' +
               (ok ? "ok" : "fail") +
-              '">' +
+              '"><span class="status-text"><i class="status-dot ' +
+              (ok ? "success" : "danger") +
+              '"></i>' +
               (ok ? "成功" : "失败") +
-              "</td></tr>"
+              "</span></td></tr>"
             );
           })
           .join("")
       : '<tr><td class="empty" colspan="6">暂无调用记录</td></tr>';
+    const transitionNote = s.status === "expired" ? "自 " + day(quota.month.starts_at) + " 起按 Free 额度统计" : "北京时间自然月";
+    const currentPlan = esc(s.plan || (s.effective_type || "free").toUpperCase());
+    const planState = s.status === "expired"
+      ? '<span class="status-text"><i class="status-dot danger"></i>原 ' + esc((s.type || "pro").toUpperCase()) + " 权益已于 " + day(s.expire_time) + " 到期</span>"
+      : s.expire_time
+        ? "有效期至 " + day(s.expire_time)
+        : "基础额度 · 无到期时间";
+    const accountActive = !u.status || u.status === "active";
     setApp(
-      '<section class="section usage">' +
-        "<div><div class=\"metric\">" +
+      '<section class="dashboard-section"><div class="section-heading"><h2 class="section-title">用量概览</h2><p class="section-note">北京时间 · 本月累计</p></div>' +
+        '<div class="usage-overview"><div class="usage-primary"><span class="metric-label">本月 Token</span><div class="metric">' +
         num(t.month.tokens) +
-        '</div><div class="metric-caption">本月 Token · 北京时间</div>' +
-        (splitTotal
-          ? '<div class="split" aria-hidden="true"><i style="width:' +
-            inPct +
-            '%"></i><b style="width:' +
-            outPct +
-            '%"></b></div>'
-          : "") +
-        "</div><div>" +
-        kv("Input", num(t.month.input_tokens)) +
-        kv("Output", num(t.month.output_tokens)) +
-        kv("本月请求", num(t.month.requests)) +
-        kv("今日请求", quotaText(t.today.requests, s.daily_request_limit)) +
+        '</div><div class="metric-secondary">' + num(t.month.requests) + " 次请求</div></div>" +
+        trendMarkup(t.trend) +
+        '</div><div class="token-mix"><span class="token-mix-title">Token 构成</span><div><div class="token-mix-bar" aria-label="输入与输出 Token 比例"><i style="width:' +
+        inPct +
+        '%"></i><b style="width:' +
+        outPct +
+        '%"></b></div><div class="token-mix-legend"><span>输入 <strong>' +
+        num(inTok) +
+        " · " + Math.round(inPct) +
+        '%</strong></span><span>输出 <strong>' +
+        num(outTok) +
+        " · " + Math.round(outPct) +
+        "%</strong></span></div></div></div></section>" +
+        '<section class="dashboard-section"><div class="section-heading"><h2 class="section-title">当前额度</h2><p class="section-note">' +
+        currentPlan +
+        " 套餐</p></div><div class=\"limits-grid\">" +
+        quotaMarkup("每日请求额度", quota.day.requests, s.daily_request_limit, "每日 00:00 重置") +
+        quotaMarkup("月度 Token 额度", quota.month.tokens, s.monthly_token_limit, transitionNote) +
         "</div></section>" +
-        '<section class="section"><h2 class="section-title">Limits</h2>' +
-        kv("今日请求", quotaText(t.today.requests, s.daily_request_limit)) +
-        (s.daily_request_limit == null ? "" : '<div class="meter"><span style="width:' + dp + '%"></span></div>') +
-        kv("本月 Token", quotaText(t.month.tokens, s.monthly_token_limit)) +
-        (s.monthly_token_limit == null ? "" : '<div class="meter"><span style="width:' + mp + '%"></span></div>') +
-        "</section>" +
-        '<section class="section"><h2 class="section-title">Plan</h2>' +
-        planRows(s) +
-        "</section>" +
-        '<section class="section"><h2 class="section-title">Account</h2>' +
-        kv("Email", esc(u.email)) +
-        kv("注册时间", day(u.created_at)) +
-        kv("邮箱", u.email_verified ? "已验证" : "未验证", u.email_verified ? "" : "warn") +
-        (u.status && u.status !== "active" ? kv("账号", esc(u.status), "warn") : "") +
-        "</section>" +
-        '<section class="section"><h2 class="section-title">Recent calls</h2>' +
-        '<div class="tablewrap"><table><thead><tr><th>时间</th><th>模型</th><th>Input</th><th>Output</th><th>Total</th><th>状态</th></tr></thead><tbody>' +
+        '<section class="dashboard-section settings-section"><div class="section-heading"><h2 class="section-title">套餐</h2></div><div class="plan-summary"><div><div class="plan-name">' +
+        currentPlan +
+        '</div><div class="detail-status"><span class="status-text"><i class="status-dot success"></i>当前生效</span></div></div><p class="plan-description">' +
+        planState +
+        "</p></div></section>" +
+        '<section class="dashboard-section settings-section"><div class="section-heading"><h2 class="section-title">账户</h2></div><div class="detail-list"><div><span class="detail-label">邮箱</span><span class="detail-value">' +
+        esc(u.email) +
+        '</span><span class="detail-status status-text"><i class="status-dot ' +
+        (u.email_verified ? "success" : "danger") +
+        '"></i>' +
+        (u.email_verified ? "已验证" : "未验证") +
+        '</span></div><div><span class="detail-label">注册时间</span><span class="detail-value">' +
+        day(u.created_at) +
+        '</span></div><div><span class="detail-label">账户状态</span><span class="detail-value status-text"><i class="status-dot ' +
+        (accountActive ? "success" : "danger") +
+        '"></i>' +
+        (accountActive ? "正常" : esc(u.status)) +
+        "</span></div></div></section>" +
+        '<section class="dashboard-section recent-section"><div class="section-heading"><h2 class="section-title">最近调用</h2><p class="section-note">最近 8 条</p></div>' +
+        '<div class="tablewrap"><table><thead><tr><th>时间</th><th>模型</th><th>输入</th><th>输出</th><th>总计</th><th>状态</th></tr></thead><tbody>' +
         rows +
         "</tbody></table></div></section>"
     );
@@ -178,7 +253,8 @@ async function loadDashboard() {
 
 async function loadContributions() {
   activateNav();
-  $("pageTitle").textContent = "Contributions";
+  beginRefresh();
+  $("pageTitle").textContent = "贡献";
   try {
     const dashboard = (await api("/api/user/dashboard")).data;
     applyAccountChrome(dashboard.user, dashboard.subscription);
@@ -327,7 +403,8 @@ function passkeyMessage(text, bad = false) {
 }
 async function loadSecurity() {
   activateNav();
-  $("pageTitle").textContent = "Security";
+  beginRefresh();
+  $("pageTitle").textContent = "安全";
   try {
     const { data } = await api("/api/user/passkeys");
     const rows = (data.passkeys || [])
@@ -362,7 +439,8 @@ async function loadSecurity() {
 
 async function loadFeedback() {
   activateNav();
-  $("pageTitle").textContent = "Feedback";
+  beginRefresh();
+  $("pageTitle").textContent = "反馈";
   try {
     const dashboard = (await api("/api/user/dashboard")).data;
     applyAccountChrome(dashboard.user, dashboard.subscription);

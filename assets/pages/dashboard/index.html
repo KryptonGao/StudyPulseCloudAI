@@ -17,10 +17,10 @@
         </div>
       </a>
       <nav class="tabs">
-        <a class="tab" data-page="/dashboard" href="/dashboard">Overview</a>
-        <a class="tab" data-page="/contributions" href="/contributions">Contributions</a>
-        <a class="tab" data-page="/security" href="/security">Security</a>
-        <a class="tab" data-page="/feedback" href="/feedback">Feedback</a>
+        <a class="tab" data-page="/dashboard" href="/dashboard">概览</a>
+        <a class="tab" data-page="/contributions" href="/contributions">贡献</a>
+        <a class="tab" data-page="/security" href="/security">安全</a>
+        <a class="tab" data-page="/feedback" href="/feedback">反馈</a>
       </nav>
       <div class="sidebar-footer">
         <div class="account-meta">
@@ -32,10 +32,11 @@
     </aside>
     <main class="main-content">
       <header class="topbar">
-        <h1 id="pageTitle">Overview</h1>
+        <h1 id="pageTitle">概览</h1>
         <div class="topbar-actions">
+          <span id="lastUpdated" class="update-status" aria-live="polite">正在加载…</span>
           <button class="btn btn-mobile-logout" type="button" onclick="logout()">退出</button>
-          <button class="btn" type="button" onclick="refreshPage()">刷新</button>
+          <button id="refreshButton" class="btn refresh-button" type="button" onclick="refreshPage()">刷新</button>
         </div>
       </header>
       <section class="content">
