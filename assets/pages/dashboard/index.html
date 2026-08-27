@@ -3,24 +3,44 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>StudyPulse Cloud AI - 用户中心</title>
+  <title>StudyPulse Cloud AI</title>
   <link rel="stylesheet" href="/pages/dashboard/styles.css">
 </head>
 <body>
   <div class="shell">
     <aside class="sidebar">
-      <div class="brand-lockup"><img class="brand-mark" src="/StudyPulseLogo.png" alt="StudyPulse Logo"><div><strong>StudyPulse</strong><span>Cloud AI</span></div></div>
-      <div class="sidebar-label">用户中心</div>
+      <a class="brand-lockup" href="/dashboard">
+        <img class="brand-mark" src="/StudyPulseLogo.png" alt="">
+        <div>
+          <strong>StudyPulse</strong>
+          <span>Cloud AI</span>
+        </div>
+      </a>
       <nav class="tabs">
-        <a class="tab" data-page="/dashboard" href="/dashboard"><span class="nav-icon">⌂</span><span>仪表盘</span></a>
-        <a class="tab" data-page="/contributions" href="/contributions"><span class="nav-icon">✦</span><span>代码贡献</span></a>
-        <a class="tab" data-page="/security" href="/security"><span class="nav-icon">⌁</span><span>安全设置</span></a>
+        <a class="tab" data-page="/dashboard" href="/dashboard">Overview</a>
+        <a class="tab" data-page="/contributions" href="/contributions">Contributions</a>
+        <a class="tab" data-page="/security" href="/security">Security</a>
+        <a class="tab" data-page="/feedback" href="/feedback">Feedback</a>
       </nav>
-      <div class="sidebar-footer"><span class="status-dot"></span><span>安全连接</span><button class="logout" onclick="logout()">退出</button></div>
+      <div class="sidebar-footer">
+        <div class="account-meta">
+          <span id="sidebarEmail" class="account-email"></span>
+          <span id="sidebarPlan" class="account-plan"></span>
+        </div>
+        <button class="logout" type="button" onclick="logout()">退出</button>
+      </div>
     </aside>
     <main class="main-content">
-      <header class="topbar"><div><div class="eyebrow">StudyPulse Cloud AI <span class="badge">用户控制台</span></div><h1 id="pageTitle">用户中心</h1></div><div class="topbar-status"><span class="status-dot"></span><span>安全连接</span><button class="btn" onclick="refreshPage()">↻ 刷新数据</button></div></header>
-      <section class="content"><div id="app" class="loading">加载中...</div></section>
+      <header class="topbar">
+        <h1 id="pageTitle">Overview</h1>
+        <div class="topbar-actions">
+          <button class="btn btn-mobile-logout" type="button" onclick="logout()">退出</button>
+          <button class="btn" type="button" onclick="refreshPage()">刷新</button>
+        </div>
+      </header>
+      <section class="content">
+        <div id="app" class="loading">加载中...</div>
+      </section>
     </main>
   </div>
   <script src="/pages/dashboard/app.js" defer></script>

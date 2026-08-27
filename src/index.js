@@ -52,6 +52,7 @@ import {
 	handleCodeLogin,
 	handleRefresh,
 } from "./auth/routes.js";
+import { CHAT_MAX_BODY_BYTES, CHAT_MAX_CONTENT_ITEMS, CHAT_MAX_MESSAGE_CHARS } from "./chat-limits.js";
 
 // 服务元信息
 const SERVICE_META = {
@@ -65,12 +66,6 @@ const ADMIN_HOSTNAME = "admin.chenkai.space";
 const SUPPORT_HOSTNAME = "support.chenkai.space";
 const AUTH_HOSTNAME = "auth.chenkai.space";
 const DASH_HOSTNAME = "dash.studypulse.chenkai.space";
-
-// 应用层限制不能依赖 Cloudflare 的平台请求体上限：request.json() 会在
-// 校验前把整个请求体读入内存，并且多模态 payload 还可能放大上游 AI 成本。
-export const CHAT_MAX_BODY_BYTES = 256 * 1024;
-export const CHAT_MAX_MESSAGE_CHARS = 32 * 1024;
-export const CHAT_MAX_CONTENT_ITEMS = 16;
 
 class ChatBodyTooLargeError extends Error {
 	constructor() {
@@ -155,12 +150,49 @@ export default {
 			const { pathname } = url;
 			const method = request.method.toUpperCase();
 			const hostname = url.hostname;
+			// Path routing is local-only. Production custom domains always match
+			// hostname below, even if LOCAL_DEV were accidentally set remotely.
+			// Wrangler remaps localhost to the first custom domain (spapi).
+			const usePathRouting =
+				hostname === "localhost" ||
+				hostname.startsWith("127.0.0.1") ||
+				hostname.endsWith(".workers.dev") ||
+				((env.LOCAL_DEV === "1" || env.LOCAL_DEV === "true") && hostname === SPAPI_HOSTNAME);
 
 			console.log(`[${method}] ${hostname}${pathname}`);
 
 			// The auth center is also consumed by native/web clients hosted on a
 			// different origin. JSON POST requests trigger a browser preflight.
 			if (method === "OPTIONS") return corsResponse(request);
+
+			// workers.dev 是公开的调试/预览入口，不作为生产管理后台入口。
+			// 即使请求携带 Authorization，也不能通过该域名访问管理页面或 API。
+			if (hostname.endsWith(".workers.dev") && isAdminPath(pathname)) {
+				return withCors(Response.json({ error: "Not Found" }, { status: 404 }), request);
+			}
+
+			// Wrangler 本地会把请求主机改写成第一条 custom domain（spapi），
+			// 因此用 LOCAL_DEV / localhost 走路径路由，而不是按生产子域名分流。
+			if (usePathRouting) {
+				if (pathname === "/login" && method === "GET") return withCors(await serveStaticPage(request, env, "/pages/auth/index.html", authPageOptions()), request);
+				if (pathname === "/support" && method === "GET") return withCors(await serveStaticPage(request, env, "/pages/support/index.html"), request);
+				if (pathname === "/oauth/github/bind" && method === "GET") return withCors(await serveStaticPage(request, env, "/pages/auth-bind/index.html", authPageOptions()), request);
+				if ((pathname === "/dashboard" || pathname === "/dashboard/" || pathname === "/contributions" || pathname === "/feedback" || pathname === "/security") && method === "GET") return withCors(await serveStaticPage(request, env, "/pages/dashboard/index.html"), request);
+				if ((pathname === "/admin" || pathname === "/admin/") && method === "GET") return withCors(await serveAdminPage(request, env), request);
+				if (pathname.startsWith("/appeal/") && method === "GET") return withCors(await serveStaticPage(request, env, "/pages/appeal/index.html"), request);
+				if (pathname === "/api/user/dashboard" || pathname === "/api/user/contributions" || pathname === "/api/user/feedback") return withCors(await handleUserDashboardApi(request, env, pathname), request);
+				if (isPasskeyRoute(pathname)) return withCors(await handlePasskeyRoute(request, env, pathname), request);
+				if (
+					pathname.startsWith("/api/admin/") ||
+					pathname.startsWith("/admin")
+				) {
+					return withCors(await handleAdmin(request, env, ctx, pathname, method), request);
+				}
+				if (pathname === "/api/appeals" && (method === "GET" || method === "POST")) {
+					return withCors(await handleSupport(request, env, pathname, method), request);
+				}
+				return withCors(await handlePublicApi(request, env, ctx, pathname, method), request);
+			}
 
 			// ── 管理后台子域名：仅 admin.chenkai.space ──
 			if (hostname === ADMIN_HOSTNAME) {
@@ -182,38 +214,6 @@ export default {
 
 			// ── 公开 API 子域名：仅 spapi.chenkai.space ──
 			if (hostname === SPAPI_HOSTNAME) {
-				return withCors(await handlePublicApi(request, env, ctx, pathname, method), request);
-			}
-
-			// workers.dev 是公开的调试/预览入口，不作为生产管理后台入口。
-			// 即使请求携带 Authorization，也不能通过该域名访问管理页面或 API。
-			if (hostname.endsWith(".workers.dev") && isAdminPath(pathname)) {
-				return withCors(Response.json({ error: "Not Found" }, { status: 404 }), request);
-			}
-
-			// ── 本地开发 & Workers.dev 调试：路径路由（兼容全部功能）──
-			if (
-				hostname === "localhost" ||
-				hostname.startsWith("127.0.0.1") ||
-				hostname.endsWith(".workers.dev")
-			) {
-				if (pathname === "/login" && method === "GET") return withCors(await serveStaticPage(request, env, "/pages/auth/index.html", authPageOptions()), request);
-				if (pathname === "/support" && method === "GET") return withCors(await serveStaticPage(request, env, "/pages/support/index.html"), request);
-				if (pathname === "/oauth/github/bind" && method === "GET") return withCors(await serveStaticPage(request, env, "/pages/auth-bind/index.html", authPageOptions()), request);
-				if ((pathname === "/dashboard" || pathname === "/dashboard/" || pathname === "/contributions" || pathname === "/feedback" || pathname === "/security") && method === "GET") return withCors(await serveStaticPage(request, env, "/pages/dashboard/index.html"), request);
-				if ((pathname === "/admin" || pathname === "/admin/") && method === "GET") return withCors(await serveAdminPage(request, env), request);
-				if (pathname.startsWith("/appeal/") && method === "GET") return withCors(await serveStaticPage(request, env, "/pages/appeal/index.html"), request);
-				if (pathname === "/api/user/dashboard" || pathname === "/api/user/contributions" || pathname === "/api/user/feedback") return withCors(await handleUserDashboardApi(request, env, pathname), request);
-				if (isPasskeyRoute(pathname)) return withCors(await handlePasskeyRoute(request, env, pathname), request);
-				if (
-					pathname.startsWith("/api/admin/") ||
-					pathname.startsWith("/admin")
-				) {
-					return withCors(await handleAdmin(request, env, ctx, pathname, method), request);
-				}
-				if (pathname === "/api/appeals" && (method === "GET" || method === "POST")) {
-					return withCors(await handleSupport(request, env, pathname, method), request);
-				}
 				return withCors(await handlePublicApi(request, env, ctx, pathname, method), request);
 			}
 

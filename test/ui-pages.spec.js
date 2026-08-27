@@ -43,6 +43,33 @@ describe("static UI pages", () => {
 		}
 	});
 
+	it("keeps production hostnames isolated from each other", async () => {
+		const adminPage = await page("admin.chenkai.space", "/admin");
+		expect(adminPage.status).toBe(200);
+		expect(await adminPage.text()).toContain("/pages/admin/app.js");
+
+		const dashboardOnAdmin = await page("admin.chenkai.space", "/dashboard");
+		expect(dashboardOnAdmin.status).toBe(404);
+
+		const supportHome = await page("support.chenkai.space", "/");
+		expect(supportHome.status).toBe(200);
+		expect(await supportHome.text()).toContain("/pages/support/app.js");
+
+		const adminOnSupport = await page("support.chenkai.space", "/admin");
+		expect(adminOnSupport.status).toBe(404);
+
+		const dashHome = await page("dash.studypulse.chenkai.space", "/");
+		expect(dashHome.status).toBe(200);
+		expect(await dashHome.text()).toContain("/pages/dashboard/app.js");
+
+		const adminOnDash = await page("dash.studypulse.chenkai.space", "/admin");
+		expect(adminOnDash.status).toBe(404);
+
+		const authLogin = await page("auth.chenkai.space", "/login");
+		expect(authLogin.status).toBe(200);
+		expect(await authLogin.text()).toContain("/pages/auth/app.js");
+	});
+
 	it("serves static CSS and JavaScript directly from the ASSETS collection", async () => {
 		const response = await page("auth.chenkai.space", "/pages/auth/app.js");
 		expect(response.status).toBe(200);

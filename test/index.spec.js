@@ -1,10 +1,7 @@
 import { env, createExecutionContext, waitOnExecutionContext, SELF } from "cloudflare:test";
 import { describe, it, expect } from "vitest";
-import worker, {
-	CHAT_MAX_BODY_BYTES,
-	CHAT_MAX_CONTENT_ITEMS,
-	CHAT_MAX_MESSAGE_CHARS,
-} from "../src";
+import worker from "../src";
+import { CHAT_MAX_BODY_BYTES, CHAT_MAX_CONTENT_ITEMS, CHAT_MAX_MESSAGE_CHARS } from "../src/chat-limits.js";
 import { sha256Hex } from "../src/auth.js";
 
 async function createUserApiKey({ membershipType = "free", requestKey = `sp_stream_${crypto.randomUUID()}` } = {}) {
