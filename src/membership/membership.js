@@ -64,13 +64,16 @@ export async function checkUserQuota(userId, env) {
 
 	// 3. 确定有效会员等级
 	let effectivePlan = user.membership_type;
+	let planTransitionAt = null;
 
 	if (effectivePlan !== "free" && user.membership_expires_at) {
 		const now = new Date();
 		const expiresAt = new Date(user.membership_expires_at);
 		if (now >= expiresAt) {
-			// 运行时降级为 free（不写库）
+			// 运行时降级为 free（不写库）。新额度只统计降级后的用量，
+			// 避免将同一周期内原会员套餐的用量计入 Free 额度。
 			effectivePlan = "free";
+			planTransitionAt = expiresAt;
 		}
 	}
 
@@ -81,20 +84,29 @@ export async function checkUserQuota(userId, env) {
 	}
 
 	// 5. 查当日请求数（按 UTC+8 自然日）
-	const todayUTC8 = new Date(
-		new Date().toLocaleString("en-US", { timeZone: "Asia/Shanghai" }),
+	const nowParts = new Intl.DateTimeFormat("en-US", {
+		timeZone: "Asia/Shanghai",
+		year: "numeric",
+		month: "numeric",
+		day: "numeric",
+	}).formatToParts(new Date());
+	const dateParts = Object.fromEntries(
+		nowParts.filter((part) => part.type !== "literal").map((part) => [part.type, Number(part.value)]),
 	);
-	todayUTC8.setHours(0, 0, 0, 0);
-	const todayStart = todayUTC8.toISOString();
+	const todayStartDate = new Date(Date.UTC(dateParts.year, dateParts.month - 1, dateParts.day) - 8 * 60 * 60 * 1000);
+	const todayStart = todayStartDate.toISOString();
 
 	if (plan.daily_request_limit !== null) {
+		const dailyQuotaStart = planTransitionAt && planTransitionAt > todayStartDate
+			? planTransitionAt.toISOString()
+			: todayStart;
 		const dailyCount = await env.StudyPulseDB.prepare(
 			`SELECT COUNT(*) AS count
 			   FROM usage_records
 			  WHERE user_id = ?
-			    AND created_at >= ?`,
+			    AND datetime(created_at) >= datetime(?)`,
 		)
-			.bind(userId, todayStart)
+			.bind(userId, dailyQuotaStart)
 			.first("count");
 
 		if (dailyCount >= plan.daily_request_limit) {
@@ -104,13 +116,16 @@ export async function checkUserQuota(userId, env) {
 
 	// 6. 查当月 Token 消耗
 	if (plan.monthly_token_limit !== null) {
-		const monthStart = new Date(todayUTC8.getFullYear(), todayUTC8.getMonth(), 1).toISOString();
+		const monthStartDate = new Date(Date.UTC(dateParts.year, dateParts.month - 1, 1) - 8 * 60 * 60 * 1000);
+		const monthStart = planTransitionAt && planTransitionAt > monthStartDate
+			? planTransitionAt.toISOString()
+			: monthStartDate.toISOString();
 
 		const monthlyTokens = await env.StudyPulseDB.prepare(
 			`SELECT COALESCE(SUM(total_tokens), 0) AS total
 			   FROM usage_records
 			  WHERE user_id = ?
-			    AND created_at >= ?`,
+			    AND datetime(created_at) >= datetime(?)`,
 		)
 			.bind(userId, monthStart)
 			.first("total");
