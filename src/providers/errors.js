@@ -17,7 +17,7 @@ export function isRetryableProviderError(err) {
 }
 
 export function classifyHttpStatus(status) {
-	if (status >= 500 || status === 408) {
+	if (status >= 500 || status === 408 || status === 429) {
 		return { retryable: true };
 	}
 	return { retryable: false };

@@ -173,6 +173,41 @@ describe("chat compatibility and gateway", () => {
 		expect(log.model).toBe("minimax-m3");
 	});
 
+	it("skips same-host OpenCode fallback and uses MiniMax after 429", async () => {
+		const { userId, apiKeyId } = await seedUser();
+		const usage = { prompt_tokens: 5, completion_tokens: 5, total_tokens: 10 };
+		const ctx = createExecutionContext();
+		const response = await executeChat({
+			request: new Request("http://localhost/v1/chat", { method: "POST" }),
+			env,
+			ctx,
+			auth: { userId, apiKeyId },
+			normalized: normalizeChatRequest({
+				message: "ping",
+				studypulse: { caller: "Legacy", thinking: "off" },
+			}),
+			plan: "plus",
+			startTime: Date.now(),
+			clientIp: "",
+			clientUa: "",
+			registry: registryOf([
+				failingAdapter(PROVIDERS.MIMO, { status: 429, retryable: true, message: "rate limit" }),
+				failingAdapter(PROVIDERS.HY3, { status: 429, retryable: true, message: "rate limit hy3" }),
+				jsonAdapter(PROVIDERS.MINIMAX, "minimax-ok", usage),
+			]),
+		});
+		await waitOnExecutionContext(ctx);
+		expect(response.status).toBe(200);
+		const log = await env.StudyPulseDB.prepare(
+			`SELECT fallback_used, primary_model, model FROM request_logs WHERE user_id = ? ORDER BY id DESC LIMIT 1`,
+		)
+			.bind(userId)
+			.first();
+		expect(log.fallback_used).toBe(1);
+		expect(log.primary_model).toBe("mimo-v2.5");
+		expect(log.model).toBe("minimax-m3");
+	});
+
 	it("does not fall back on 400 errors", async () => {
 		const { userId, apiKeyId } = await seedUser();
 		const ctx = createExecutionContext();
