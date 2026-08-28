@@ -84,6 +84,7 @@ export function normalizeChatRequest(body) {
 		caller: callerInfo.caller,
 		knownCaller: callerInfo.known && Boolean(meta),
 		requestedThinking: thinkingInfo.valid ? thinkingInfo.thinking : "auto",
+		locale: typeof meta?.locale === "string" ? meta.locale : null,
 		hasImages: messagesHaveImages(messages),
 		estimatedInputTokens,
 		messageCount: messages.length,

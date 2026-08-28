@@ -208,6 +208,43 @@ describe("chat compatibility and gateway", () => {
 		expect(log.model).toBe("minimax-m3");
 	});
 
+	it("injects Chinese output language before calling the provider", async () => {
+		const { userId, apiKeyId } = await seedUser();
+		const usage = { prompt_tokens: 4, completion_tokens: 4, total_tokens: 8 };
+		let seen = null;
+		const adapter = {
+			providerId: PROVIDERS.MIMO,
+			isAvailable: () => true,
+			async createChatCompletion({ messages }) {
+				seen = messages;
+				return jsonAdapter(PROVIDERS.MIMO, "好的", usage).createChatCompletion({ stream: false });
+			},
+		};
+		const ctx = createExecutionContext();
+		const response = await executeChat({
+			request: new Request("http://localhost/v1/chat", { method: "POST" }),
+			env,
+			ctx,
+			auth: { userId, apiKeyId },
+			normalized: normalizeChatRequest({
+				messages: [
+					{ role: "system", content: "You are a tutor." },
+					{ role: "user", content: "这题怎么做" },
+				],
+				studypulse: { caller: "LLMChat", thinking: "off", locale: "en" },
+			}),
+			plan: "plus",
+			startTime: Date.now(),
+			clientIp: "",
+			clientUa: "",
+			registry: registryOf([adapter]),
+		});
+		expect(response.status).toBe(200);
+		expect(seen[0].content).toContain("[StudyPulse output language]");
+		expect(seen[0].content).toContain("简体中文");
+		expect(seen[1].content).toContain("Please reply in Simplified Chinese");
+	});
+
 	it("does not fall back on 400 errors", async () => {
 		const { userId, apiKeyId } = await seedUser();
 		const ctx = createExecutionContext();

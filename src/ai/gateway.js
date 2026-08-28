@@ -9,6 +9,7 @@ import { createProviderRegistry } from "../providers/registry.js";
 import { extractUsageFromSse, normalizeUsage } from "../providers/openai-compat.js";
 import { isRetryableProviderError, ProviderError } from "../providers/errors.js";
 import { getFallbackModel, providerForModel, reasoningEffortFor } from "./policies.js";
+import { applyOutputLanguage } from "./language.js";
 
 function logGateway(event) {
 	console.log("[ai-gateway]", JSON.stringify(event));
@@ -185,6 +186,11 @@ export async function executeChat({
 		reason: primary.reason,
 	});
 
+	const messages = applyOutputLanguage(normalized.messages, {
+		locale: normalized.locale,
+		acceptLanguage: request.headers.get("Accept-Language"),
+	});
+
 	if (normalized.stream) {
 		return executeStream({
 			request,
@@ -192,6 +198,7 @@ export async function executeChat({
 			ctx,
 			auth,
 			normalized,
+			messages,
 			primary,
 			startTime,
 			clientIp,
@@ -205,6 +212,7 @@ export async function executeChat({
 		ctx,
 		auth,
 		normalized,
+		messages,
 		primary,
 		startTime,
 		clientIp,
@@ -354,6 +362,7 @@ async function executeJson({
 	ctx,
 	auth,
 	normalized,
+	messages,
 	primary,
 	startTime,
 	clientIp,
@@ -366,7 +375,7 @@ async function executeJson({
 	try {
 		const attempted = await attemptWithFallback(
 			primary,
-			(route) => callProvider(providers, env, route, normalized.messages, false, undefined),
+			(route) => callProvider(providers, env, route, messages, false, undefined),
 			{ registry: providers, env },
 		);
 		fallbackUsed = attempted.fallbackUsed;
@@ -423,6 +432,7 @@ async function executeStream({
 	ctx,
 	auth,
 	normalized,
+	messages,
 	primary,
 	startTime,
 	clientIp,
@@ -436,7 +446,7 @@ async function executeStream({
 	try {
 		const attempted = await attemptWithFallback(
 			primary,
-			(route) => callProvider(providers, env, route, normalized.messages, true, request.signal),
+			(route) => callProvider(providers, env, route, messages, true, request.signal),
 			{ registry: providers, env },
 		);
 		fallbackUsed = attempted.fallbackUsed;

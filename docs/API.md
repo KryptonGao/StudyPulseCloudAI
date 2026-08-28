@@ -345,7 +345,7 @@ Authorization: Bearer sp_sess_xxx
     { "role": "assistant", "content": "..." }
   ],
   "stream": true,
-  "studypulse": { "caller": "MistakeAI", "thinking": "auto" }
+  "studypulse": { "caller": "MistakeAI", "thinking": "auto", "locale": "zh-Hans" }
 }
 ```
 
@@ -355,6 +355,7 @@ Authorization: Bearer sp_sess_xxx
 | `stream` | boolean | SSE 流式，默认 false |
 | `studypulse.caller` | string | 功能场景。未知 caller 记日志并按 Legacy 默认策略（不 400） |
 | `studypulse.thinking` | string | 仅 `off` / `auto` / `on`。非法值记日志并视为 `auto` |
+| `studypulse.locale` | string | 可选。App 语言（如 `zh-Hans` / `zh-Hant` / `ja` / `ko` / `en`）。网关据此约束回复语言；若用户最新一条消息已是中日韩，则以消息脚本为准 |
 | `model` | string | **忽略**，不再做套餐白名单 403 |
 
 **旧客户端（迁移期）：** 无 `studypulse` → `caller=Legacy`, `thinking=auto`；仍接受 `message` 或 `content`。
