@@ -11,7 +11,7 @@
  *   - key_hash 绝不暴露
  */
 import { env, SELF } from "cloudflare:test";
-import { describe, it, expect, beforeAll } from "vitest";
+import { describe, it, expect, beforeAll, afterEach } from "vitest";
 import { sha256Hex } from "../src/auth.js";
 
 const ADMIN_TOKEN = "test-admin-token-12345";
@@ -497,4 +497,65 @@ describe("Admin API - 请求日志", () => {
 			expect(log).not.toHaveProperty("key_hash");
 		}
 	}, 30000);
+});
+
+describe("Admin API - 积分计价", () => {
+	afterEach(async () => {
+		await adminFetch("/api/admin/pricing/restore", {
+			method: "POST",
+			csrfCookie: "test-csrf",
+			body: {},
+		});
+	});
+	it("列出三个模型的默认毫积分", async () => {
+		const res = await adminFetch("/api/admin/pricing");
+		expect(res.status).toBe(200);
+		const json = await res.json();
+		expect(json.success).toBe(true);
+		const models = Object.fromEntries(json.data.models.map((row) => [row.model, row]));
+		expect(models["mimo-v2.5"].input).toBe(10);
+		expect(models.hy3.output).toBe(120);
+		expect(models["minimax-m3"].cache).toBe(20);
+		expect(models["mimo-v2.5"].tokensPerPoint.input).toBe(100);
+	});
+
+	it("按模型更新比值并影响后续计费预览", async () => {
+		const update = await adminFetch("/api/admin/pricing/update", {
+			method: "POST",
+			csrfCookie: "test-csrf",
+			body: {
+				model: "mimo-v2.5",
+				input: 20,
+				output: 60,
+				reasoning: 60,
+				cache: 10,
+				multiplier: 2,
+			},
+		});
+		expect(update.status).toBe(200);
+		const json = await update.json();
+		const mimo = json.data.models.find((row) => row.model === "mimo-v2.5");
+		expect(mimo.input).toBe(20);
+		expect(mimo.multiplier).toBe(2);
+		expect(mimo.preview.input1000).toBe(40);
+
+		const restore = await adminFetch("/api/admin/pricing/restore", {
+			method: "POST",
+			csrfCookie: "test-csrf",
+			body: {},
+		});
+		expect(restore.status).toBe(200);
+		const restored = (await restore.json()).data.models.find((row) => row.model === "mimo-v2.5");
+		expect(restored.input).toBe(10);
+		expect(restored.multiplier).toBe(1);
+	});
+
+	it("拒绝未知模型", async () => {
+		const res = await adminFetch("/api/admin/pricing/update", {
+			method: "POST",
+			csrfCookie: "test-csrf",
+			body: { model: "gpt-x", input: 1, output: 1, reasoning: 1, cache: 1, multiplier: 1 },
+		});
+		expect(res.status).toBe(400);
+	});
 });

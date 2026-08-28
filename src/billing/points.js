@@ -8,15 +8,17 @@ export function calculatePoints({
 	reasoningTokens = 0,
 	cachedInputTokens = 0,
 	pricingVersion = CURRENT_PRICING_VERSION,
+	table = null,
+	rates = null,
 } = {}) {
-	const table = PRICING[pricingVersion] || PRICING[CURRENT_PRICING_VERSION];
-	const rates = table[model] || table[AI_MODELS.MIMO_V25];
+	const pricingTable = table || PRICING[pricingVersion] || PRICING[CURRENT_PRICING_VERSION];
+	const modelRates = rates || pricingTable[model] || pricingTable[AI_MODELS.MIMO_V25];
 	const millipoints =
-		Math.max(0, inputTokens) * rates.input +
-		Math.max(0, outputTokens) * rates.output +
-		Math.max(0, reasoningTokens) * rates.reasoning +
-		Math.max(0, cachedInputTokens) * rates.cache;
-	const scaled = millipoints * (rates.multiplier || 1);
+		Math.max(0, inputTokens) * modelRates.input +
+		Math.max(0, outputTokens) * modelRates.output +
+		Math.max(0, reasoningTokens) * modelRates.reasoning +
+		Math.max(0, cachedInputTokens) * modelRates.cache;
+	const scaled = millipoints * (modelRates.multiplier || 1);
 	if (scaled <= 0) return 0;
 	return Math.ceil(scaled / 1000);
 }

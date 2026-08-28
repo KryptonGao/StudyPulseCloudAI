@@ -34,6 +34,7 @@ import migration20Sql from "../migrations/0020_update_membership_quotas.sql?raw"
 import migration21Sql from "../migrations/0021_create_passkeys.sql?raw";
 import migration22Sql from "../migrations/0022_update_membership_quotas.sql?raw";
 import migration23Sql from "../migrations/0023_ai_router_points.sql?raw";
+import migration24Sql from "../migrations/0024_pricing_rates.sql?raw";
 
 const allMigrations = [
 	migration1Sql,  // 0001: api_keys
@@ -59,6 +60,7 @@ const allMigrations = [
 	migration21Sql, // 0021: passkey credentials and enrollment prompt state
 	migration22Sql, // 0022: membership quota update
 	migration23Sql, // 0023: AI router + points
+	migration24Sql, // 0024: live per-model pricing rates
 ];
 
 // 与 v0.2 内存 Set 时期一致的 Beta Key，保证旧测试不破
