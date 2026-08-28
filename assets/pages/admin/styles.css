@@ -14,6 +14,7 @@ button,input,select{font:inherit}button{cursor:pointer}button:focus-visible,inpu
 .pricing-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}.pricing-card{display:flex;flex-direction:column;gap:14px}.pricing-fields{display:grid;gap:12px}.pricing-fields label{display:block;font-size:12px;color:var(--text-muted)}.pricing-fields .input{margin-top:5px}.pricing-preview{font-size:12px;color:var(--text-muted);line-height:1.6}.pricing-actions{margin-top:auto;display:flex;flex-wrap:wrap;gap:8px}
 @media (max-width:1100px){.pricing-grid{grid-template-columns:1fr}}
 /* ── Model management ── */
+.model-actions-cell{flex-wrap:nowrap}
 .form-grid{display:grid;grid-template-columns:1fr 1fr;gap:0 16px}
 .form-grid-3{grid-template-columns:1fr 1fr 1fr}
 .form-grid-5{grid-template-columns:repeat(5,1fr);gap:0 10px}

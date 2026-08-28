@@ -1083,7 +1083,7 @@ function renderModelsTable(models) {
       '<td>' + escapeHtml(ratesText) + '</td>' +
       '<td>' + keyBadge + '</td>' +
       '<td>' + formatDate(m.updatedAt) + '</td>' +
-      '<td class="actions-cell">' +
+      '<td class="actions-cell model-actions-cell">' +
         '<button class="btn btn-sm btn-outline" onclick="showModelModal(\'' + escapeHtml(m.id) + '\')">编辑</button>' +
         '<button class="btn btn-sm btn-outline" onclick="testModel(\'' + escapeHtml(m.id) + '\')">测试</button>' +
         '<button class="btn btn-sm ' + (m.enabled ? 'btn-danger' : 'btn-primary') + '" onclick="toggleModelEnabled(\'' + escapeHtml(m.id) + '\')">' + (m.enabled ? '禁用' : '启用') + '</button>' +
