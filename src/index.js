@@ -16,16 +16,12 @@
  *   src/database/usage.js     用量记录
  */
 
-import { authenticate } from "./auth.js";
-import { chat as minimaxChat, chatStream as minimaxChatStream } from "./providers/minimax.js";
-import { incrementApiKeyUsage } from "./database/api_keys.js";
-import { handleAdminApi } from "./admin/routes.js";
-import { writeRequestLog } from "./admin/database.js";
 import { authenticateRequest } from "./auth/middleware.js";
+import { handleAdminApi } from "./admin/routes.js";
 import { sendVerificationCode, verifyCode } from "./auth/email.js";
 import { createSession, destroySession } from "./auth/session.js";
 import { handleGitHubBindSendCode, handleGitHubBindVerify, handleGitHubCallback, handleGitHubStart } from "./auth/oauth.js";
-import { checkUserQuota, getMembershipPlan, recordUsage } from "./membership/membership.js";
+import { checkUserQuota, getMembershipPlan } from "./membership/membership.js";
 import { getUserById } from "./users/users.js";
 import { handleAppealStatus, handleSubmitAppeal } from "./appeals/routes.js";
 import {
@@ -52,7 +48,10 @@ import {
 	handleCodeLogin,
 	handleRefresh,
 } from "./auth/routes.js";
-import { CHAT_MAX_BODY_BYTES, CHAT_MAX_CONTENT_ITEMS, CHAT_MAX_MESSAGE_CHARS } from "./chat-limits.js";
+import { CHAT_MAX_BODY_BYTES } from "./chat-limits.js";
+import { hasAnyProviderKey } from "./ai/models.js";
+import { executeChat } from "./ai/gateway.js";
+import { normalizeChatRequest, validateChatPayload } from "./chat/normalize.js";
 
 // 服务元信息
 const SERVICE_META = {
@@ -117,27 +116,6 @@ async function parseChatRequestBody(request) {
 	}
 
 	return JSON.parse(new TextDecoder().decode(bytes));
-}
-
-function validateChatPayload(body) {
-	if (typeof body?.message === "string" && body.message.length > CHAT_MAX_MESSAGE_CHARS) {
-		return "Message too long";
-	}
-
-	if (Array.isArray(body?.content)) {
-		if (body.content.length > CHAT_MAX_CONTENT_ITEMS) {
-			return "Too many content items";
-		}
-
-		// 多模态文本也属于用户消息，不能绕过 message 的长度限制。
-		for (const item of body.content) {
-			if (typeof item?.text === "string" && item.text.length > CHAT_MAX_MESSAGE_CHARS) {
-				return "Content item text too long";
-			}
-		}
-	}
-
-	return null;
 }
 
 /**
@@ -551,8 +529,8 @@ async function handleUserProfile(request, env) {
 			plan: plan ? {
 				name: plan.name,
 				daily_request_limit: plan.daily_request_limit,
-				monthly_token_limit: plan.monthly_token_limit,
-				available_models: JSON.parse(plan.available_models),
+				monthly_point_limit: plan.monthly_point_limit,
+				available_models: JSON.parse(plan.available_models || "[]"),
 			} : null,
 		},
 	});
@@ -565,36 +543,15 @@ async function handleUserProfile(request, env) {
 /**
  * POST /v1/chat
  *
- * 流程：鉴权 -> 校验 Secret -> 解析 Body -> 调用 MiniMax -> 计次 -> 写日志 -> 返回回复
- *
- * Body 支持两种形态（多模态向后兼容）：
- *   1. 纯文本：      { "message": "你好" }
- *   2. 多模态数组：  { "content": [...] }
- *   model 可选，默认 "MiniMax-M3"；需在用户计划可用模型列表中。
- *   同时存在时 content 优先；两者都缺则视为空文本。
- *
- * 错误码：
- *   400  Invalid JSON Body        Body 非合法 JSON
- *   400  Message too long         文本消息超过应用层限制
- *   400  Too many content items   多模态 content 数组超过应用层限制
- *   413  Request body too large   请求体超过应用层限制
- *   401  Missing API Key          未带 Authorization
- *   403  Invalid API Key          Key 无效 / Key 已禁用
- *   429  API quota exceeded       请求次数已达上限
- *   500  Server not configured    未配置 MINIMAX_API_KEY
- *   502  AI request failed        上游 AI 调用失败
- *
- * 额度规则：仅在 MiniMax 调用成功后才自增 request_count。
- *           鉴权失败、上游失败、内部错误一律不计次。
- * 日志规则：成功或失败都写 request_logs（通过 ctx.waitUntil 异步不阻塞响应）。
- * 应用层限制：请求体 256 KiB，文本消息 32,768 字符，content 数组 16 项。
+ * 流程：鉴权 -> 额度 -> Router -> Provider Adapter -> 账本/日志
+ * 官方 Cloud 请求忽略客户端 model；caller/thinking 由 studypulse metadata 声明。
+ * 旧客户端无 studypulse 时按 Legacy + auto 兼容。
  */
 async function handleChat(request, env, ctx) {
 	const startTime = Date.now();
 	const clientIp = request.headers.get("CF-Connecting-IP") || "";
 	const clientUa = request.headers.get("User-Agent") || "";
 
-	// 1. 双鉴权：Session Token 优先，其次 X-API-Key，最后 Bearer API Key
 	const auth = await authenticateRequest(request, env);
 	if (!auth.ok) {
 		return auth.response;
@@ -605,15 +562,13 @@ async function handleChat(request, env, ctx) {
 		if (account?.status === "banned") return Response.json({ error: "Account banned" }, { status: 403 });
 	}
 
-	// 2. 校验 Worker Secret 是否已注入
-	if (!env || !env.MINIMAX_API_KEY) {
+	if (!hasAnyProviderKey(env)) {
 		return Response.json(
-			{ error: "Server not configured: MINIMAX_API_KEY missing" },
+			{ error: "Server not configured: no AI provider API keys" },
 			{ status: 500 },
 		);
 	}
 
-	// 3. 解析 Body（先限制读取大小，再解析 JSON）
 	let body;
 	try {
 		body = await parseChatRequestBody(request);
@@ -635,21 +590,9 @@ async function handleChat(request, env, ctx) {
 		return Response.json({ error: payloadError }, { status: 400 });
 	}
 
-	// 4. 组装 user 消息
-	let userContent;
-	if (Array.isArray(body?.content)) {
-		userContent = body.content;
-	} else {
-		userContent =
-			typeof body?.message === "string" ? body.message : "";
-	}
+	const normalized = normalizeChatRequest(body);
 
-	const messages = [{ role: "user", content: userContent }];
-
-	// 5. 额度检查（统一按 user_id）
-	let model = body.model || "MiniMax-M3";
-	const provider = "minimax";
-
+	let planId = "free";
 	if (userId) {
 		const quota = await checkUserQuota(userId, env);
 		if (!quota.allowed) {
@@ -658,319 +601,29 @@ async function handleChat(request, env, ctx) {
 				{ status: 429 },
 			);
 		}
-		// 校验 model 是否在用户可用模型列表中
 		const userRecord = await env.StudyPulseDB.prepare(
-			`SELECT membership_type, membership_expires_at FROM users WHERE id = ?`
+			`SELECT role, membership_type, membership_expires_at FROM users WHERE id = ?`,
 		).bind(userId).first();
-		let effectiveMembership = "free";
-		if (userRecord) {
-			effectiveMembership = userRecord.membership_type;
-			if (effectiveMembership !== "free" && userRecord.membership_expires_at && new Date() >= new Date(userRecord.membership_expires_at)) {
-				effectiveMembership = "free";
-			}
-		}
-		const plan = await getMembershipPlan(effectiveMembership, env);
-		if (plan) {
-			const available = JSON.parse(plan.available_models);
-			if (!available.includes(model)) {
-				return Response.json(
-					{ error: `Model "${model}" is not available on your plan` },
-					{ status: 403 },
-				);
+		planId = "free";
+		if (userRecord?.role === "admin") {
+			planId = "admin";
+		} else if (userRecord) {
+			planId = userRecord.membership_type || "free";
+			if (planId !== "free" && userRecord.membership_expires_at && new Date() >= new Date(userRecord.membership_expires_at)) {
+				planId = "free";
 			}
 		}
 	}
 
-	// 6. 流式分支（必须在额度和模型白名单检查之后）
-	if (body?.stream === true) {
-		try {
-			return await handleChatStream(request, env, ctx, { userId, apiKeyId }, messages, model);
-		} catch (err) {
-			console.error("AI stream setup error:", err?.stack || err?.message || err);
-			return Response.json(
-				{ error: "AI request failed" },
-				{ status: 502 },
-			);
-		}
-	}
-
-	// 7. 调用 AI Provider（非流式）
-	let result;
-	try {
-		result = await minimaxChat(messages, env);
-	} catch (err) {
-		console.error("AI provider error:", err?.message || err);
-
-		const latency = Date.now() - startTime;
-		ctx.waitUntil(
-			writeRequestLog(env, {
-				api_key_id: apiKeyId ?? null,
-				user_id: userId ?? null,
-				model,
-				provider,
-				status: 502,
-				latency_ms: latency,
-				ip: clientIp,
-				user_agent: clientUa,
-				error_message: (err?.message || "Unknown error").slice(0, 500),
-			}).catch((e) => console.error("Failed to write error log:", e?.message || e)),
-		);
-
-		return Response.json(
-			{ error: "AI request failed" },
-			{ status: 502 },
-		);
-	}
-
-	const { reply, usage } = result;
-
-	// 8. 成功后记录
-	if (apiKeyId) {
-		try {
-			await incrementApiKeyUsage(env, apiKeyId, usage?.total_tokens);
-		} catch (err) {
-			console.error("Failed to increment API key usage:", err?.message || err);
-		}
-	}
-
-	if (userId) {
-		try {
-			await recordUsage(userId, apiKeyId ?? null, model, usage, env);
-		} catch (err) {
-			console.error("Failed to record usage:", err?.message || err);
-		}
-	}
-
-	// 9. 异步写成功日志
-	const latency = Date.now() - startTime;
-	ctx.waitUntil(
-		writeRequestLog(env, {
-			api_key_id: apiKeyId ?? null,
-			user_id: userId ?? null,
-			model,
-			provider,
-			status: 200,
-			latency_ms: latency,
-			ip: clientIp,
-			user_agent: clientUa,
-			prompt_tokens: usage?.prompt_tokens ?? null,
-			completion_tokens: usage?.completion_tokens ?? null,
-			total_tokens: usage?.total_tokens ?? null,
-		}).catch((e) => console.error("Failed to write request log:", e?.message || e)),
-	);
-
-	// 10. 返回模型回复
-	return Response.json({
-		success: true,
-		data: {
-			reply,
-		},
-	});
-}
-
-// ────────────────────────────────────────────────────────────────────────────
-// POST /v1/chat (stream: true) — SSE 流式传输
-// ────────────────────────────────────────────────────────────────────────────
-
-/**
- * POST /v1/chat 流式分支
- *
- * 与 handleChat 共享鉴权、Secret 校验、Body 解析和消息组装。
- * 差异在于 AI 调用和响应格式：
- *   - 调用 minimaxChatStream() 获取上游 SSE ReadableStream
- *   - 使用 ReadableStream.tee() 将上游流一分为二：
- *       客户端分支：零包装直接作为 Response body 返回，保证字节级完整
- *       用量分支：  异步扫描提取 token，计次后写日志
- *   - 检测客户端断开（request.signal "abort"），终止用量扫描
- *   - usage 缺失时仍正常计次，日志标记 error_message="usage_missing"
- *
- * @param {Request} request
- * @param {object} env
- * @param {ExecutionContext} ctx
- * @param {object} apiKey - 已鉴权的 API Key D1 记录
- * @param {Array} messages - 已组装的消息数组
- * @param {string} modelOverride - 客户端指定的模型（可选，默认 MiniMax-M3）
- * @returns {Promise<Response>} SSE 流式响应或错误 JSON
- */
-async function handleChatStream(request, env, ctx, { userId, apiKeyId }, messages, modelOverride) {
-	const startTime = Date.now();
-	const clientIp = request.headers.get("CF-Connecting-IP") || "";
-	const clientUa = request.headers.get("User-Agent") || "";
-	const model = modelOverride || "MiniMax-M3";
-	const provider = "minimax";
-
-	// 1. 发起上游流式请求
-	let upstreamResponse;
-	try {
-		upstreamResponse = await minimaxChatStream(messages, env);
-	} catch (err) {
-		console.error("AI provider stream error:", err?.message || err);
-		const latency = Date.now() - startTime;
-		ctx.waitUntil(
-			writeRequestLog(env, {
-				api_key_id: apiKeyId ?? null,
-				user_id: userId ?? null,
-				model,
-				provider,
-				status: 502,
-				latency_ms: latency,
-				ip: clientIp,
-				user_agent: clientUa,
-				error_message: (err?.message || "Unknown error").slice(0, 500),
-			}).catch((e) => console.error("Failed to write error log:", e?.message || e)),
-		);
-		return Response.json(
-			{ error: "AI request failed" },
-			{ status: 502 },
-		);
-	}
-
-	// 2. tee() 将上游流一分为二
-	if (!upstreamResponse.body || typeof upstreamResponse.body.tee !== "function") {
-		console.error("MiniMax stream response did not contain a readable body");
-		return Response.json(
-			{ error: "AI request failed" },
-			{ status: 502 },
-		);
-	}
-
-	let clientStream;
-	let usageStream;
-	try {
-		[clientStream, usageStream] = upstreamResponse.body.tee();
-	} catch (err) {
-		console.error("Failed to split MiniMax stream:", err?.stack || err?.message || err);
-		return Response.json(
-			{ error: "AI request failed" },
-			{ status: 502 },
-		);
-	}
-
-	// 3. 异步处理用量分支
-	ctx.waitUntil(
-		(async () => {
-			const reader = usageStream.getReader();
-			const decoder = new TextDecoder();
-			let buffer = "";
-			let lastUsageEvent = null;
-
-			request.signal.addEventListener("abort", () => {
-				reader.cancel().catch(() => {});
-			});
-
-			try {
-				while (true) {
-					const { done, value } = await reader.read();
-					if (done) break;
-
-					buffer += decoder.decode(value, { stream: true });
-					const parts = buffer.split("\n\n");
-					buffer = parts.pop();
-					for (const event of parts) {
-						const dataLine = event
-							.split("\n")
-							.find((line) => line.startsWith("data: "));
-						if (dataLine) {
-							const json = dataLine.slice(6);
-							if (json !== "[DONE]") {
-								try {
-									const parsed = JSON.parse(json);
-									if (parsed.usage) {
-										lastUsageEvent = json;
-									}
-								} catch {
-									/* 非 JSON 行忽略 */
-								}
-							}
-						}
-					}
-				}
-
-				buffer += decoder.decode();
-				if (buffer.trim()) {
-					const dataLine = buffer
-						.split("\n")
-						.find((line) => line.startsWith("data: "));
-					if (dataLine) {
-						const json = dataLine.slice(6);
-						if (json !== "[DONE]") {
-							try {
-								const parsed = JSON.parse(json);
-								if (parsed.usage) {
-									lastUsageEvent = json;
-								}
-							} catch {
-								/* 非 JSON 行忽略 */
-							}
-						}
-					}
-				}
-
-				let usage = null;
-				if (lastUsageEvent) {
-					try {
-						usage = JSON.parse(lastUsageEvent).usage;
-					} catch {
-						/* JSON 解析失败视为无 usage */
-					}
-				}
-
-				const latency = Date.now() - startTime;
-				const logEntry = {
-					api_key_id: apiKeyId ?? null,
-					user_id: userId ?? null,
-					model,
-					provider,
-					status: 200,
-					latency_ms: latency,
-					ip: clientIp,
-					user_agent: clientUa,
-					prompt_tokens: usage?.prompt_tokens ?? null,
-					completion_tokens: usage?.completion_tokens ?? null,
-					total_tokens: usage?.total_tokens ?? null,
-				};
-
-				if (!usage) {
-					logEntry.error_message = "usage_missing";
-					console.warn(
-						`Stream completed but usage missing for userId=${userId}, apiKeyId=${apiKeyId}`,
-					);
-				}
-
-				const promises = [];
-				if (apiKeyId) {
-					promises.push(incrementApiKeyUsage(env, apiKeyId, usage?.total_tokens));
-				}
-				if (userId) {
-					promises.push(recordUsage(userId, apiKeyId ?? null, model, usage, env));
-				}
-				promises.push(writeRequestLog(env, logEntry));
-
-				await Promise.all(promises);
-			} catch (err) {
-				console.error("Usage stream processing error:", err?.message || err);
-				const latency = Date.now() - startTime;
-				await writeRequestLog(env, {
-					api_key_id: apiKeyId ?? null,
-					user_id: userId ?? null,
-					model,
-					provider,
-					status: 200,
-					latency_ms: latency,
-					ip: clientIp,
-					user_agent: clientUa,
-					error_message: (err?.message || "Usage processing error").slice(0, 500),
-				}).catch(() => {});
-			}
-		})(),
-	);
-
-	// 4. 直接返回上游 SSE 流
-	return new Response(clientStream, {
-		headers: {
-			"Content-Type": "text/event-stream",
-			"Cache-Control": "no-cache",
-			Connection: "keep-alive",
-		},
+	return executeChat({
+		request,
+		env,
+		ctx,
+		auth: { userId, apiKeyId },
+		normalized,
+		plan: planId,
+		startTime,
+		clientIp,
+		clientUa,
 	});
 }

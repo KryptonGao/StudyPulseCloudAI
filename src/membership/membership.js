@@ -1,30 +1,15 @@
 /**
  * StudyPulse Cloud AI - 会员与额度管理
  *
- * 统一按 user_id 管理额度。两种入口统一流程：
- *   Session 用户：session → user_id → membership → quota
- *   API Key 用户（绑定用户）：api_key → user_id → membership → quota
- *   API Key 用户（未绑定用户）：走 api_keys 表自身 quota（不改动）
- *
- * 避免双重额度限制：
- *   - authenticate() 仅负责 Key 校验、存在、禁用、过期
- *   - 绑定用户的 API Key：设置 request_limit=NULL，额度由 checkUserQuota() 统一管理
- *   - 旧匿名 API Key：保留 request_limit 值，由 authenticate() 内部检查
+ * 统一按 user_id 管理额度。用户 UI 使用 daily requests + monthly points。
+ * Token 字段仍写入账本，供内部成本核算，不再作为用户配额。
  */
 
-// ────────────────────────────────────────────────────────────────────────────
-// 会员计划查询
-// ────────────────────────────────────────────────────────────────────────────
+import { recordUsageRecord } from "../database/usage.js";
 
-/**
- * 获取会员计划配置。
- * @param {string} planId - 'free' | 'plus' | 'pro'
- * @param {{ StudyPulseDB: D1Database }} env
- * @returns {Promise<object|null>}
- */
 export async function getMembershipPlan(planId, env) {
 	return env.StudyPulseDB.prepare(
-		`SELECT id, name, daily_request_limit, monthly_token_limit, available_models
+		`SELECT id, name, daily_request_limit, monthly_token_limit, monthly_point_limit, available_models
 		   FROM membership_plans
 		  WHERE id = ?`,
 	)
@@ -32,19 +17,7 @@ export async function getMembershipPlan(planId, env) {
 		.first();
 }
 
-// ────────────────────────────────────────────────────────────────────────────
-// 额度检查
-// ────────────────────────────────────────────────────────────────────────────
-
-/**
- * 检查用户是否有可用额度。
- *
- * @param {string} userId - users.id
- * @param {{ StudyPulseDB: D1Database }} env
- * @returns {Promise<{allowed: boolean, reason?: string}>}
- */
 export async function checkUserQuota(userId, env) {
-	// 1. 查用户角色和会员信息
 	const user = await env.StudyPulseDB.prepare(
 		`SELECT role, membership_type, membership_expires_at
 		   FROM users
@@ -57,12 +30,10 @@ export async function checkUserQuota(userId, env) {
 		return { allowed: false, reason: "User not found" };
 	}
 
-	// 2. admin 跳过额度检查
 	if (user.role === "admin") {
 		return { allowed: true };
 	}
 
-	// 3. 确定有效会员等级
 	let effectivePlan = user.membership_type;
 	let planTransitionAt = null;
 
@@ -70,20 +41,16 @@ export async function checkUserQuota(userId, env) {
 		const now = new Date();
 		const expiresAt = new Date(user.membership_expires_at);
 		if (now >= expiresAt) {
-			// 运行时降级为 free（不写库）。新额度只统计降级后的用量，
-			// 避免将同一周期内原会员套餐的用量计入 Free 额度。
 			effectivePlan = "free";
 			planTransitionAt = expiresAt;
 		}
 	}
 
-	// 4. 查 membership_plans 获取限额
 	const plan = await getMembershipPlan(effectivePlan, env);
 	if (!plan) {
 		return { allowed: false, reason: "Membership plan not found" };
 	}
 
-	// 5. 查当日请求数（按 UTC+8 自然日）
 	const nowParts = new Intl.DateTimeFormat("en-US", {
 		timeZone: "Asia/Shanghai",
 		year: "numeric",
@@ -114,15 +81,14 @@ export async function checkUserQuota(userId, env) {
 		}
 	}
 
-	// 6. 查当月 Token 消耗
-	if (plan.monthly_token_limit !== null) {
+	if (plan.monthly_point_limit !== null) {
 		const monthStartDate = new Date(Date.UTC(dateParts.year, dateParts.month - 1, 1) - 8 * 60 * 60 * 1000);
 		const monthStart = planTransitionAt && planTransitionAt > monthStartDate
 			? planTransitionAt.toISOString()
 			: monthStartDate.toISOString();
 
-		const monthlyTokens = await env.StudyPulseDB.prepare(
-			`SELECT COALESCE(SUM(total_tokens), 0) AS total
+		const monthlyPoints = await env.StudyPulseDB.prepare(
+			`SELECT COALESCE(SUM(points_charged), 0) AS total
 			   FROM usage_records
 			  WHERE user_id = ?
 			    AND datetime(created_at) >= datetime(?)`,
@@ -130,46 +96,35 @@ export async function checkUserQuota(userId, env) {
 			.bind(userId, monthStart)
 			.first("total");
 
-		if (monthlyTokens >= plan.monthly_token_limit) {
-			return { allowed: false, reason: "Monthly token limit exceeded" };
+		if (monthlyPoints >= plan.monthly_point_limit) {
+			return { allowed: false, reason: "Monthly point limit exceeded" };
 		}
 	}
 
 	return { allowed: true };
 }
 
-// ────────────────────────────────────────────────────────────────────────────
-// 用量记录
-// ────────────────────────────────────────────────────────────────────────────
-
 /**
- * 写入 usage_records。
- *
- * 三种情况：
- *   - Session 调用：user_id 有值, api_key_id=NULL
- *   - API Key 绑定用户：user_id 有值, api_key_id 有值
- *   - 旧 API Key 无用户：不写（调用方判断 userId 存在才调此函数）
- *
  * @param {string} userId
  * @param {number|null} apiKeyId
- * @param {string} model
- * @param {{ prompt_tokens?: number, completion_tokens?: number, total_tokens?: number }|null} usage
+ * @param {object} record
  * @param {{ StudyPulseDB: D1Database }} env
- * @returns {Promise<void>}
  */
-export async function recordUsage(userId, apiKeyId, model, usage, env) {
-	await env.StudyPulseDB.prepare(
-		`INSERT INTO usage_records
-		   (user_id, api_key_id, model, input_tokens, output_tokens, total_tokens)
-		 VALUES (?, ?, ?, ?, ?, ?)`,
-	)
-		.bind(
-			userId,
-			apiKeyId ?? null,
-			model ?? null,
-			usage?.prompt_tokens ?? 0,
-			usage?.completion_tokens ?? 0,
-			usage?.total_tokens ?? 0,
-		)
-		.run();
+export async function recordUsage(userId, apiKeyId, record, env) {
+	await recordUsageRecord(env, {
+		user_id: userId,
+		api_key_id: apiKeyId ?? null,
+		model: record?.model ?? null,
+		provider: record?.provider ?? null,
+		caller: record?.caller ?? null,
+		requested_thinking: record?.requested_thinking ?? null,
+		effective_thinking: record?.effective_thinking ?? null,
+		input_tokens: record?.input_tokens ?? 0,
+		output_tokens: record?.output_tokens ?? 0,
+		total_tokens: record?.total_tokens ?? 0,
+		reasoning_tokens: record?.reasoning_tokens ?? 0,
+		points_charged: record?.points_charged ?? 0,
+		pricing_version: record?.pricing_version ?? null,
+		routing_version: record?.routing_version ?? null,
+	});
 }

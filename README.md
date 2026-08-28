@@ -110,32 +110,13 @@ POST /v1/chat
     │      ├─ Session Token（sp_sess_ 前缀）→ validateSession → userId
     │      ├─ X-API-Key header             → authenticate → userId/apiKeyId
     │      └─ Authorization: Bearer        → authenticate → userId/apiKeyId
-    ├─ 2. 校验 MINIMAX_API_KEY Secret
-    ├─ 3. 解析 Body（支持纯文本 message / 多模态 content 数组）
-    ├─ 4. 组装 messages
+    ├─ 2. 校验至少一个 Provider API Key
+    ├─ 3. 解析 Body（messages 优先；兼容 message / content）
+    ├─ 4. Router（caller + thinking + vision）→ Adapter
     │
-    ├─ 5. 流式分支判断
-    │      │
-    │      ├─ stream: true →
-    │      │   ├─ 调用 minimaxChatStream() 获取上游 SSE Response
-    │      │   ├─ tee() 将流一分为二
-    │      │   ├─ 客户端流：直接作为 SSE Response body 返回
-    │      │   └─ 用量流：异步扫描 SSE chunk 提取 usage → 计次 → 写日志
-    │      │
-    │      └─ 非流式 →
-    │          ├─ 额度检查（checkUserQuota）
-    │          │   ├─ admin 角色跳过
-    │          │   ├─ 查会员计划获取 daily_request_limit / monthly_token_limit
-    │          │   ├─ 查当日请求数（usage_records，UTC+8）
-    │          │   └─ 查当月 Token 消耗
-    │          ├─ 模型可用性校验（用户计划是否包含所选模型）
-    │          ├─ 调用 minimaxChat()
-    │          │   ├─ 成功 → { reply, usage }
-    │          │   └─ 失败 → 502（异步写失败日志）
-    │          ├─ incrementApiKeyUsage（api_keys 自增）
-    │          ├─ recordUsage（usage_records 写入）
-    │          ├─ 异步写成功日志（writeRequestLog）
-    │          └─ 返回 { success: true, data: { reply } }
+    ├─ 5. 额度检查（checkUserQuota）：日请求 COUNT(*) + 月 SUM(points_charged)
+    ├─ 6. 流式 tee() / 非流式 JSON；最多一次 fallback
+    └─ 7. 成功则 recordUsage（用户积分）+ request_logs（可含 token）
 ```
 
 ### 鉴权优先级
@@ -216,6 +197,7 @@ studypulse-cloud-ai/
 ├── docs/
 │   ├── API.md                        # 公开 API 完整文档
 │   ├── AUTHENTICATION.md             # 统一身份与登录流程
+│   ├── MEMBERSHIP_AND_QUOTA.md       # 套餐与用量限制实现
 │   └── ERROR_CODES.md                # 错误码表
 ├── wrangler.jsonc                    # Cloudflare Workers 配置
 ├── vitest.config.js                  # Vitest 测试配置
@@ -535,14 +517,13 @@ data: [DONE]
 | 403 | `Invalid API Key` | Key 不存在或格式错误 |
 | 403 | `API Key disabled` | Key 已被管理员禁用 |
 | 403 | `API Key expired` | Key 已过期 |
-| 403 | `Model "xxx" is not available on your plan` | 所选模型不在当前会员计划中 |
 | 404 | `Not Found` | 未定义的路径 |
 | 429 | `API quota exceeded` | Key 请求次数达到 `request_limit` |
 | 429 | `Daily request limit exceeded` | 用户当日请求次数达到会员上限 |
-| 429 | `Monthly token limit exceeded` | 用户当月 Token 消耗达到会员上限 |
+| 429 | `Monthly point limit exceeded` | 用户当月 AI Points 达到会员上限 |
 | 429 | `Verification code locked` | 验证码错误次数超过 5 次 |
-| 500 | `Server not configured` | 未配置 `MINIMAX_API_KEY` |
-| 502 | `AI request failed` | 上游 MiniMax 调用失败 |
+| 500 | `Server not configured: no AI provider API keys` | 未配置任何上游 API Key |
+| 502 | `AI request failed` | 上游 Provider 调用失败 |
 | 502 | `Email delivery failed` | Resend 邮件发送失败 |
 
 ### 上游模型配置
@@ -666,19 +647,20 @@ CREATE TABLE sessions (
 CREATE TABLE membership_plans (
     id                  TEXT PRIMARY KEY,      -- 'free' | 'plus' | 'pro'
     name                TEXT NOT NULL,
-    daily_request_limit INTEGER,              -- NULL = 不限
-    monthly_token_limit INTEGER,              -- NULL = 不限
-    available_models    TEXT NOT NULL DEFAULT '["MiniMax-M3"]'  -- JSON array
+    daily_request_limit INTEGER,
+    monthly_token_limit INTEGER,              -- deprecated
+    monthly_point_limit INTEGER,              -- 用户月积分上限
+    available_models    TEXT NOT NULL DEFAULT '["MiniMax-M3"]'
 );
 ```
 
-默认种子数据：
+默认种子数据（INTERNAL_TEST）：
 
-| Plan | 价格 / 月 | 日请求上限 | 月 Token 上限 | 可用模型 |
-|------|----------|-----------|-------------|---------|
-| free | ¥0 | 5 | 50,000 | MiniMax-M3 |
-| plus | ¥14.9 | 50 | 2,000,000 | MiniMax-M3 |
-| pro | ¥34.9 | 200 | 4,000,000 | MiniMax-M3 |
+| Plan | 价格 / 月 | 日请求上限 | 月 AI Points |
+|------|----------|-----------|-------------|
+| free | ¥0 | 5 | 5,000 |
+| plus | ¥14.9 | 50 | 200,000 |
+| pro | ¥34.9 | 200 | 400,000 |
 
 ### usage_records 表
 

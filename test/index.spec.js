@@ -147,7 +147,7 @@ describe("StudyPulse Cloud AI v0.2-beta", () => {
 			expect(await response.json()).toEqual({ error: "Daily request limit exceeded" });
 		});
 
-		it("rejects streaming requests for models outside the membership plan", async () => {
+		it("ignores client model selection for official routed requests", async () => {
 			const { requestKey } = await createUserApiKey();
 
 			const response = await streamChat(requestKey, {
@@ -155,10 +155,8 @@ describe("StudyPulse Cloud AI v0.2-beta", () => {
 				model: "model-not-in-free-plan",
 				message: "model access",
 			});
-			expect(response.status).toBe(403);
-			expect(await response.json()).toEqual({
-				error: 'Model "model-not-in-free-plan" is not available on your plan',
-			});
+			expect(response.status).not.toBe(403);
+			expect(response.status).not.toBe(401);
 		});
 	});
 });

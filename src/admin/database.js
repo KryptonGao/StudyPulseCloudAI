@@ -370,9 +370,11 @@ export async function writeRequestLog(env, entry) {
 	await env.StudyPulseDB.prepare(
 		`INSERT INTO request_logs
 		   (api_key_id, user_id, model, provider, status, latency_ms,
-		    prompt_tokens, completion_tokens, total_tokens,
-		    ip, user_agent, error_message)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		    prompt_tokens, completion_tokens, total_tokens, reasoning_tokens, points_charged,
+		    ip, user_agent, error_message,
+		    caller, requested_thinking, effective_thinking, routing_version,
+		    fallback_used, fallback_reason, primary_model)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 	)
 		.bind(
 			entry.api_key_id ?? null,
@@ -384,9 +386,18 @@ export async function writeRequestLog(env, entry) {
 			entry.prompt_tokens ?? null,
 			entry.completion_tokens ?? null,
 			entry.total_tokens ?? null,
+			entry.reasoning_tokens ?? null,
+			entry.points_charged ?? null,
 			entry.ip ?? null,
 			entry.user_agent ?? null,
 			entry.error_message ?? null,
+			entry.caller ?? null,
+			entry.requested_thinking ?? null,
+			entry.effective_thinking ?? null,
+			entry.routing_version ?? null,
+			entry.fallback_used ? 1 : 0,
+			entry.fallback_reason ?? null,
+			entry.primary_model ?? null,
 		)
 		.run();
 }

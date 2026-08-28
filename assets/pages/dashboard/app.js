@@ -103,9 +103,9 @@ function kv(label, value, extra) {
 function trendMarkup(rawPoints) {
   const all = Array.isArray(rawPoints) ? rawPoints.slice(-14) : [];
   const points = all.slice(-7);
-  const previous = all.slice(-14, -7).reduce((sum, point) => sum + Number(point.tokens || 0), 0);
-  const current = points.reduce((sum, point) => sum + Number(point.tokens || 0), 0);
-  const peak = Math.max(1, ...points.map((point) => Number(point.tokens || 0)));
+  const previous = all.slice(-14, -7).reduce((sum, point) => sum + Number(point.points || 0), 0);
+  const current = points.reduce((sum, point) => sum + Number(point.points || 0), 0);
+  const peak = Math.max(1, ...points.map((point) => Number(point.points || 0)));
   let compare = "近两周暂无用量";
   let compareClass = "";
   if (previous > 0) {
@@ -117,20 +117,20 @@ function trendMarkup(rawPoints) {
   }
   const columns = points
     .map((point) => {
-      const tokens = Number(point.tokens || 0);
-      const height = tokens ? Math.max(4, (tokens / peak) * 100) : 2;
+      const value = Number(point.points || 0);
+      const height = value ? Math.max(4, (value / peak) * 100) : 2;
       const label = String(point.day || "").slice(5).replace("-", "/");
       return (
-        '<div class="trend-column" title="' + esc(point.day) + " · " + num(tokens) + ' Token">' +
+        '<div class="trend-column" title="' + esc(point.day) + " · " + num(value) + ' Points">' +
         '<div class="trend-bar-track"><i class="trend-bar" style="height:' + height + '%"></i></div>' +
         '<span class="trend-day">' + esc(label) + "</span></div>"
       );
     })
     .join("");
   return (
-    '<div class="usage-trend"><div class="trend-head"><span class="trend-title">近 7 天 Token · ' + num(current) + "</span>" +
+    '<div class="usage-trend"><div class="trend-head"><span class="trend-title">近 7 天积分 · ' + num(current) + "</span>" +
     '<span class="trend-compare ' + compareClass + '">' + compare + "</span></div>" +
-    '<div class="trend-chart" role="img" aria-label="近 7 天 Token 用量趋势">' + columns + "</div></div>"
+    '<div class="trend-chart" role="img" aria-label="近 7 天 AI 积分用量趋势">' + columns + "</div></div>"
   );
 }
 function quotaMarkup(label, used, limit, note) {
@@ -158,13 +158,8 @@ async function loadDashboard() {
     const u = d.user;
     const s = d.subscription;
     const t = d.usage;
-    const quota = t.quota || { day: { requests: t.today.requests }, month: { tokens: t.month.tokens } };
+    const quota = t.quota || { day: { requests: t.today.requests }, month: { points: t.month.points } };
     applyAccountChrome(u, s);
-    const inTok = Number(t.month.input_tokens || 0);
-    const outTok = Number(t.month.output_tokens || 0);
-    const splitTotal = inTok + outTok;
-    const inPct = splitTotal ? (inTok / splitTotal) * 100 : 0;
-    const outPct = splitTotal ? (outTok / splitTotal) * 100 : 0;
     const calls = d.recent_calls || [];
     const rows = calls.length
       ? calls
@@ -176,11 +171,7 @@ async function loadDashboard() {
               "</td><td>" +
               esc(x.model || "-") +
               "</td><td>" +
-              num(x.input_tokens) +
-              "</td><td>" +
-              num(x.output_tokens) +
-              "</td><td>" +
-              num(x.tokens) +
+              esc(x.caller || "-") +
               '</td><td class="' +
               (ok ? "ok" : "fail") +
               '"><span class="status-text"><i class="status-dot ' +
@@ -191,7 +182,7 @@ async function loadDashboard() {
             );
           })
           .join("")
-      : '<tr><td class="empty" colspan="6">暂无调用记录</td></tr>';
+      : '<tr><td class="empty" colspan="4">暂无调用记录</td></tr>';
     const transitionNote = s.status === "expired" ? "自 " + day(quota.month.starts_at) + " 起按 Free 额度统计" : "北京时间自然月";
     const currentPlan = esc(s.plan || (s.effective_type || "free").toUpperCase());
     const planState = s.status === "expired"
@@ -202,26 +193,16 @@ async function loadDashboard() {
     const accountActive = !u.status || u.status === "active";
     setApp(
       '<section class="dashboard-section"><div class="section-heading"><h2 class="section-title">用量概览</h2><p class="section-note">北京时间 · 本月累计</p></div>' +
-        '<div class="usage-overview"><div class="usage-primary"><span class="metric-label">本月 Token</span><div class="metric">' +
-        num(t.month.tokens) +
+        '<div class="usage-overview"><div class="usage-primary"><span class="metric-label">本月 AI 积分</span><div class="metric">' +
+        num(t.month.points) +
         '</div><div class="metric-secondary">' + num(t.month.requests) + " 次请求</div></div>" +
         trendMarkup(t.trend) +
-        '</div><div class="token-mix"><span class="token-mix-title">Token 构成</span><div><div class="token-mix-bar" aria-label="输入与输出 Token 比例"><i style="width:' +
-        inPct +
-        '%"></i><b style="width:' +
-        outPct +
-        '%"></b></div><div class="token-mix-legend"><span>输入 <strong>' +
-        num(inTok) +
-        " · " + Math.round(inPct) +
-        '%</strong></span><span>输出 <strong>' +
-        num(outTok) +
-        " · " + Math.round(outPct) +
-        "%</strong></span></div></div></div></section>" +
+        "</div></section>" +
         '<section class="dashboard-section"><div class="section-heading"><h2 class="section-title">当前额度</h2><p class="section-note">' +
         currentPlan +
         " 套餐</p></div><div class=\"limits-grid\">" +
         quotaMarkup("每日请求额度", quota.day.requests, s.daily_request_limit, "每日 00:00 重置") +
-        quotaMarkup("月度 Token 额度", quota.month.tokens, s.monthly_token_limit, transitionNote) +
+        quotaMarkup("月度 AI 积分", quota.month.points, s.monthly_point_limit, transitionNote) +
         "</div></section>" +
         '<section class="dashboard-section settings-section"><div class="section-heading"><h2 class="section-title">套餐</h2></div><div class="plan-summary"><div><div class="plan-name">' +
         currentPlan +
@@ -242,7 +223,7 @@ async function loadDashboard() {
         (accountActive ? "正常" : esc(u.status)) +
         "</span></div></div></section>" +
         '<section class="dashboard-section recent-section"><div class="section-heading"><h2 class="section-title">最近调用</h2><p class="section-note">最近 8 条</p></div>' +
-        '<div class="tablewrap"><table><thead><tr><th>时间</th><th>模型</th><th>输入</th><th>输出</th><th>总计</th><th>状态</th></tr></thead><tbody>' +
+        '<div class="tablewrap"><table><thead><tr><th>时间</th><th>模型</th><th>Caller</th><th>状态</th></tr></thead><tbody>' +
         rows +
         "</tbody></table></div></section>"
     );

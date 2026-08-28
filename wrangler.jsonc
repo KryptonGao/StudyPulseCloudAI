@@ -14,6 +14,15 @@
 	"compatibility_flags": [
 		"nodejs_compat"
 	],
+	"vars": {
+		"MINIMAX_BASE_URL": "https://api.minimaxi.com/v1",
+		"MINIMAX_MODEL": "MiniMax-M3",
+		"MIMO_BASE_URL": "https://opencode.ai/zen/v1",
+		"MIMO_MODEL": "mimo-v2.5-free",
+		"MIMO_AUTH_STYLE": "bearer",
+		"HY3_BASE_URL": "https://opencode.ai/zen/v1",
+		"HY3_MODEL": "hy3-free"
+	},
 	"d1_databases": [
 		{
 			"binding": "StudyPulseDB",

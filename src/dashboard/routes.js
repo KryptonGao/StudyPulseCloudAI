@@ -41,7 +41,7 @@ function trendSeries(rows, startsAt) {
   return Array.from({ length: 14 }, (_, index) => {
     const day = new Date(start + index * 24 * 60 * 60 * 1000 + 8 * 60 * 60 * 1000).toISOString().slice(0, 10);
     const point = byDay.get(day);
-    return { day, requests: Number(point?.requests || 0), tokens: Number(point?.tokens || 0) };
+    return { day, requests: Number(point?.requests || 0), points: Number(point?.points || 0) };
   });
 }
 
@@ -71,21 +71,33 @@ export async function handleUserDashboardApi(request, env, pathname) {
   const plan = await getMembershipPlan(planId, env);
   const quota = quotaStarts(user, planId, starts);
   const [today, month, quotaDay, quotaMonth, trend, recent] = await Promise.all([
-    env.StudyPulseDB.prepare(`SELECT COUNT(*) AS requests, COALESCE(SUM(input_tokens),0) AS input_tokens, COALESCE(SUM(output_tokens),0) AS output_tokens, COALESCE(SUM(total_tokens),0) AS tokens FROM usage_records WHERE user_id = ? AND datetime(created_at) >= datetime(?)`).bind(user.id, starts.today).first(),
-    env.StudyPulseDB.prepare(`SELECT COUNT(*) AS requests, COALESCE(SUM(input_tokens),0) AS input_tokens, COALESCE(SUM(output_tokens),0) AS output_tokens, COALESCE(SUM(total_tokens),0) AS tokens FROM usage_records WHERE user_id = ? AND datetime(created_at) >= datetime(?)`).bind(user.id, starts.month).first(),
+    env.StudyPulseDB.prepare(`SELECT COUNT(*) AS requests, COALESCE(SUM(points_charged),0) AS points FROM usage_records WHERE user_id = ? AND datetime(created_at) >= datetime(?)`).bind(user.id, starts.today).first(),
+    env.StudyPulseDB.prepare(`SELECT COUNT(*) AS requests, COALESCE(SUM(points_charged),0) AS points FROM usage_records WHERE user_id = ? AND datetime(created_at) >= datetime(?)`).bind(user.id, starts.month).first(),
     env.StudyPulseDB.prepare(`SELECT COUNT(*) AS requests FROM usage_records WHERE user_id = ? AND datetime(created_at) >= datetime(?)`).bind(user.id, quota.day).first(),
-    env.StudyPulseDB.prepare(`SELECT COALESCE(SUM(total_tokens),0) AS tokens FROM usage_records WHERE user_id = ? AND datetime(created_at) >= datetime(?)`).bind(user.id, quota.month).first(),
-    env.StudyPulseDB.prepare(`SELECT strftime('%Y-%m-%d', created_at, '+8 hours') AS day, COUNT(*) AS requests, COALESCE(SUM(total_tokens),0) AS tokens FROM usage_records WHERE user_id = ? AND datetime(created_at) >= datetime(?) GROUP BY day ORDER BY day`).bind(user.id, starts.trend).all(),
-    env.StudyPulseDB.prepare(`SELECT id, model, status, prompt_tokens AS input_tokens, completion_tokens AS output_tokens, total_tokens AS tokens, request_time AS created_at FROM request_logs WHERE user_id = ? ORDER BY request_time DESC LIMIT 8`).bind(user.id).all(),
+    env.StudyPulseDB.prepare(`SELECT COALESCE(SUM(points_charged),0) AS points FROM usage_records WHERE user_id = ? AND datetime(created_at) >= datetime(?)`).bind(user.id, quota.month).first(),
+    env.StudyPulseDB.prepare(`SELECT strftime('%Y-%m-%d', created_at, '+8 hours') AS day, COUNT(*) AS requests, COALESCE(SUM(points_charged),0) AS points FROM usage_records WHERE user_id = ? AND datetime(created_at) >= datetime(?) GROUP BY day ORDER BY day`).bind(user.id, starts.trend).all(),
+    env.StudyPulseDB.prepare(`SELECT id, model, status, request_time AS created_at, caller FROM request_logs WHERE user_id = ? ORDER BY request_time DESC LIMIT 8`).bind(user.id).all(),
   ]);
 
   return json({ success: true, data: {
     user: { id: user.id, email: user.email, username: user.username, avatar: user.avatar_url, created_at: user.created_at, status: user.status || "active", email_verified: !!user.email_verified },
-    subscription: { plan: plan?.name || planId.toUpperCase(), type: user.membership_type || "free", effective_type: planId, status: planId === "free" && user.membership_type !== "free" ? "expired" : "active", expire_time: user.membership_expires_at, auto_renew: false, daily_request_limit: plan?.daily_request_limit ?? null, monthly_token_limit: plan?.monthly_token_limit ?? null },
+    subscription: {
+      plan: plan?.name || planId.toUpperCase(),
+      type: user.membership_type || "free",
+      effective_type: planId,
+      status: planId === "free" && user.membership_type !== "free" ? "expired" : "active",
+      expire_time: user.membership_expires_at,
+      auto_renew: false,
+      daily_request_limit: plan?.daily_request_limit ?? null,
+      monthly_point_limit: plan?.monthly_point_limit ?? null,
+    },
     usage: {
-      today: { requests: Number(today?.requests || 0), input_tokens: Number(today?.input_tokens || 0), output_tokens: Number(today?.output_tokens || 0), tokens: Number(today?.tokens || 0) },
-      month: { requests: Number(month?.requests || 0), input_tokens: Number(month?.input_tokens || 0), output_tokens: Number(month?.output_tokens || 0), tokens: Number(month?.tokens || 0) },
-      quota: { day: { requests: Number(quotaDay?.requests || 0), starts_at: quota.day }, month: { tokens: Number(quotaMonth?.tokens || 0), starts_at: quota.month } },
+      today: { requests: Number(today?.requests || 0), points: Number(today?.points || 0) },
+      month: { requests: Number(month?.requests || 0), points: Number(month?.points || 0) },
+      quota: {
+        day: { requests: Number(quotaDay?.requests || 0), starts_at: quota.day },
+        month: { points: Number(quotaMonth?.points || 0), starts_at: quota.month },
+      },
       trend: trendSeries(trend.results || [], starts.trend),
     },
     recent_calls: recent.results || [],

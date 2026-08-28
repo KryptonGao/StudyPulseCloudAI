@@ -5,6 +5,15 @@ interface __BaseEnv_Env {
 	StudyPulseDB: D1Database;
 	ASSETS: Fetcher;
 	MINIMAX_API_KEY: string;
+	MINIMAX_BASE_URL?: string;
+	MINIMAX_MODEL?: string;
+	MIMO_API_KEY?: string;
+	MIMO_BASE_URL?: string;
+	MIMO_MODEL?: string;
+	MIMO_AUTH_STYLE?: string;
+	HY3_API_KEY?: string;
+	HY3_BASE_URL?: string;
+	HY3_MODEL?: string;
 	ADMIN_API_TOKEN: string;
 }
 declare namespace Cloudflare {
