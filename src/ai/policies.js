@@ -1,100 +1,96 @@
-import { AI_MODELS, FALLBACK_MODEL, MODEL_PROVIDER } from "./models.js";
+/**
+ * Caller policies and plan capabilities.
+ *
+ * Callers map to a routing PURPOSE (light/chat/reasoning/vision), never to a
+ * concrete model. The router resolves the purpose against the ai_models
+ * table (purpose tags, capabilities, priority, min_plan, enabled) to pick
+ * primary/fallback dynamically — adding a model with a matching purpose tag
+ * automatically puts it into that route's candidate pool.
+ */
+
+import { PURPOSE_LADDER } from "./model-config.js";
 import { CALLERS } from "./callers.js";
 
-export const ROUTING_VERSION = "2026-08-v1";
+export const ROUTING_VERSION = "2026-08-v2";
 
 export const UPGRADE_THRESHOLDS = {
 	hy3: { estimatedInputTokens: 6000, messageCount: 12 },
 	m3: { estimatedInputTokens: 12000, messageCount: 20 },
 };
 
-const MIMO_OFF = {
-	model: AI_MODELS.MIMO_V25,
+const LIGHT = {
+	purpose: "light",
 	defaultThinking: "off",
 	allowsUserThinking: true,
+	// Heavy prompts escalate to the standard-chat purpose pool.
+	escalateHeavy: true,
+	heavyPurpose: "chat",
 };
 
-const HY3_AUTO = {
-	model: AI_MODELS.HY3,
+const CHAT_AUTO = {
+	purpose: "chat",
 	defaultThinking: "auto",
 	allowsUserThinking: true,
 };
 
-const HY3_AUTO_BACKGROUND = {
-	model: AI_MODELS.HY3,
-	defaultThinking: "auto",
-	allowsUserThinking: false,
-};
-
-const M3_ON = {
-	model: AI_MODELS.MINIMAX_M3,
+const REASONING_ON = {
+	purpose: "reasoning",
 	defaultThinking: "on",
 	allowsUserThinking: true,
-	forceM3: true,
 };
 
-const M3_VISION = {
-	model: AI_MODELS.MINIMAX_M3,
+const VISION_AUTO = {
+	purpose: "vision",
 	defaultThinking: "auto",
 	allowsUserThinking: false,
-	forceM3: true,
-	requiresVision: true,
 };
 
 export const CALLER_POLICIES = {
-	[CALLERS.StudySuggestions]: { ...MIMO_OFF, allowsUserThinking: false },
-	[CALLERS.ScorePrediction]: { ...MIMO_OFF, allowsUserThinking: false },
-	[CALLERS.SubjectRadar]: { ...MIMO_OFF, allowsUserThinking: false },
-	[CALLERS.WeeklyReport]: { ...MIMO_OFF, allowsUserThinking: false },
-	[CALLERS.HomeAskRouter]: { ...MIMO_OFF, allowsUserThinking: false },
-	[CALLERS.HabitInsight]: { ...MIMO_OFF, allowsUserThinking: false },
-	[CALLERS.BrainUsageQuota]: { ...MIMO_OFF, allowsUserThinking: false },
-	[CALLERS.BodyRadar]: { ...MIMO_OFF, allowsUserThinking: false },
-	[CALLERS.StudySessionStress]: { ...MIMO_OFF, allowsUserThinking: false },
-	[CALLERS.LLMChat]: MIMO_OFF,
-	[CALLERS.Legacy]: MIMO_OFF,
-	[CALLERS.HomeAskAnswer]: HY3_AUTO,
-	[CALLERS.MistakeAI]: { ...HY3_AUTO, complexityUpgrade: true },
-	[CALLERS.SimilarQuestion]: HY3_AUTO,
-	[CALLERS.SimilarQuestionGrading]: { ...HY3_AUTO, complexityUpgrade: true },
-	[CALLERS.KnowledgeFaultLine]: HY3_AUTO_BACKGROUND,
-	[CALLERS.AIQuiz]: HY3_AUTO,
-	[CALLERS.AIQuizGrading]: HY3_AUTO,
-	[CALLERS.ExamSimulationGeneration]: HY3_AUTO,
-	[CALLERS.ExamSimulationGrading]: HY3_AUTO,
-	[CALLERS.ExamRoleAnalysis]: HY3_AUTO_BACKGROUND,
-	[CALLERS.ExamReadiness]: HY3_AUTO_BACKGROUND,
-	[CALLERS.ExamReversePlanner]: HY3_AUTO_BACKGROUND,
-	[CALLERS.AICoach]: { ...HY3_AUTO, complexityUpgrade: true },
-	[CALLERS.AIDiscussion]: { ...HY3_AUTO, complexityUpgrade: true },
-	[CALLERS.AutoMindMap]: HY3_AUTO_BACKGROUND,
-	[CALLERS.MistakeDebate]: M3_ON,
-	[CALLERS.ExamAutopsy]: M3_VISION,
-	[CALLERS.MistakeImageRecognition]: M3_VISION,
+	[CALLERS.StudySuggestions]: { ...LIGHT, allowsUserThinking: false },
+	[CALLERS.ScorePrediction]: { ...LIGHT, allowsUserThinking: false },
+	[CALLERS.SubjectRadar]: { ...LIGHT, allowsUserThinking: false },
+	[CALLERS.WeeklyReport]: { ...LIGHT, allowsUserThinking: false },
+	[CALLERS.HomeAskRouter]: { ...LIGHT, allowsUserThinking: false },
+	[CALLERS.HabitInsight]: { ...LIGHT, allowsUserThinking: false },
+	[CALLERS.BrainUsageQuota]: { ...LIGHT, allowsUserThinking: false },
+	[CALLERS.BodyRadar]: { ...LIGHT, allowsUserThinking: false },
+	[CALLERS.StudySessionStress]: { ...LIGHT, allowsUserThinking: false },
+	[CALLERS.LLMChat]: LIGHT,
+	[CALLERS.Legacy]: LIGHT,
+	[CALLERS.HomeAskAnswer]: CHAT_AUTO,
+	[CALLERS.MistakeAI]: { ...CHAT_AUTO, complexityUpgrade: true },
+	[CALLERS.SimilarQuestion]: CHAT_AUTO,
+	[CALLERS.SimilarQuestionGrading]: { ...CHAT_AUTO, complexityUpgrade: true },
+	[CALLERS.KnowledgeFaultLine]: { ...CHAT_AUTO, allowsUserThinking: false },
+	[CALLERS.AIQuiz]: CHAT_AUTO,
+	[CALLERS.AIQuizGrading]: CHAT_AUTO,
+	[CALLERS.ExamSimulationGeneration]: CHAT_AUTO,
+	[CALLERS.ExamSimulationGrading]: CHAT_AUTO,
+	[CALLERS.ExamRoleAnalysis]: { ...CHAT_AUTO, allowsUserThinking: false },
+	[CALLERS.ExamReadiness]: { ...CHAT_AUTO, allowsUserThinking: false },
+	[CALLERS.ExamReversePlanner]: { ...CHAT_AUTO, allowsUserThinking: false },
+	[CALLERS.AICoach]: { ...CHAT_AUTO, complexityUpgrade: true },
+	[CALLERS.AIDiscussion]: { ...CHAT_AUTO, complexityUpgrade: true },
+	[CALLERS.AutoMindMap]: { ...CHAT_AUTO, allowsUserThinking: false },
+	[CALLERS.MistakeDebate]: REASONING_ON,
+	[CALLERS.ExamAutopsy]: VISION_AUTO,
+	[CALLERS.MistakeImageRecognition]: VISION_AUTO,
 };
 
-export const DEFAULT_POLICY = { ...MIMO_OFF, allowsUserThinking: false };
+export const DEFAULT_POLICY = { ...LIGHT, allowsUserThinking: false };
 
 export const PLAN_CAPABILITIES = {
 	free: {
 		allowForcedThinking: false,
-		allowM3Upgrade: false,
-		allowDesignatedM3: false,
 	},
 	plus: {
 		allowForcedThinking: true,
-		allowM3Upgrade: true,
-		allowDesignatedM3: true,
 	},
 	pro: {
 		allowForcedThinking: true,
-		allowM3Upgrade: true,
-		allowDesignatedM3: true,
 	},
 	admin: {
 		allowForcedThinking: true,
-		allowM3Upgrade: true,
-		allowDesignatedM3: true,
 	},
 };
 
@@ -106,16 +102,28 @@ export function getPlanCapabilities(plan) {
 	return PLAN_CAPABILITIES[plan] || PLAN_CAPABILITIES.free;
 }
 
-export function getFallbackModel(model) {
-	return FALLBACK_MODEL[model] || AI_MODELS.HY3;
+/** Ordered purpose pools searched for candidates: caller purpose first. */
+export function purposeSearchOrder(policy) {
+	const target = policy.purpose;
+	return [target, ...PURPOSE_LADDER.filter((p) => p !== target)];
 }
 
-export function providerForModel(model) {
-	return MODEL_PROVIDER[model] || MODEL_PROVIDER[AI_MODELS.MIMO_V25];
+export function resolveEffectiveThinking(policy, requestedThinking, planCaps) {
+	if (!policy.allowsUserThinking) {
+		return policy.defaultThinking;
+	}
+	if (requestedThinking === "on" && !planCaps.allowForcedThinking) {
+		return policy.defaultThinking === "off" ? "auto" : policy.defaultThinking;
+	}
+	if (requestedThinking === "auto") {
+		return policy.defaultThinking === "off" ? "off" : "auto";
+	}
+	return requestedThinking;
 }
 
-export function reasoningEffortFor(model, effectiveThinking) {
-	if (model !== AI_MODELS.HY3) return null;
+/** reasoning_effort is an upstream dialect handled by the hy3 adapter. */
+export function reasoningEffortFor(provider, effectiveThinking) {
+	if (provider !== "hy3") return null;
 	if (effectiveThinking === "on") return "high";
 	if (effectiveThinking === "auto") return "low";
 	return "none";

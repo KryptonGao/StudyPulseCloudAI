@@ -4,12 +4,11 @@ import { recordUsage } from "../membership/membership.js";
 import { calculatePoints } from "../billing/points.js";
 import { CURRENT_PRICING_VERSION } from "../billing/pricing.js";
 import { getPricingTable } from "../billing/store.js";
-import { AI_MODELS, getProviderConfig } from "./models.js";
 import { routeChat } from "./router.js";
 import { createProviderRegistry } from "../providers/registry.js";
 import { extractUsageFromSse, normalizeUsage } from "../providers/openai-compat.js";
 import { isRetryableProviderError, ProviderError } from "../providers/errors.js";
-import { getFallbackModel, providerForModel, reasoningEffortFor } from "./policies.js";
+import { reasoningEffortFor } from "./policies.js";
 import { applyOutputLanguage } from "./language.js";
 
 function logGateway(event) {
@@ -24,9 +23,9 @@ function providerFailureResponse(err) {
 }
 
 async function callProvider(registry, env, route, messages, stream, signal) {
-	const adapter = registry.get(route.provider);
+	const adapter = registry.get(route.model) || registry.get(route.provider);
 	if (!adapter) {
-		throw new ProviderError(`provider ${route.provider} not registered`, {
+		throw new ProviderError(`model ${route.model} not registered`, {
 			retryable: true,
 			provider: route.provider,
 			code: "unavailable",
@@ -51,67 +50,50 @@ async function callProvider(registry, env, route, messages, stream, signal) {
 	});
 }
 
-function withModel(route, model) {
+/** Bind routing position: primary model + next-in-chain fallback. */
+function withRoutePosition(route, index) {
+	const candidate = route.chain[index];
+	const next = route.chain[index + 1] || null;
 	return {
 		...route,
-		model,
-		provider: providerForModel(model),
-		reasoningEffort: reasoningEffortFor(model, route.effectiveThinking),
-		fallbackModel: getFallbackModel(model),
-		fallbackProvider: providerForModel(getFallbackModel(model)),
+		model: candidate.id,
+		provider: candidate.provider,
+		baseURL: candidate.baseURL,
+		host: candidate.host,
+		reasoningEffort: reasoningEffortFor(candidate.provider, route.effectiveThinking),
+		fallbackModel: next?.id || null,
+		fallbackProvider: next?.provider || null,
 	};
 }
 
-function pickAvailableRoute(primary, registry) {
-	const candidates = [
-		primary.model,
-		primary.fallbackModel,
-		AI_MODELS.MINIMAX_M3,
-		AI_MODELS.HY3,
-		AI_MODELS.MIMO_V25,
-	];
-	const seen = new Set();
-	for (const model of candidates) {
-		if (!model || seen.has(model)) continue;
-		seen.add(model);
-		if (registry.isAvailable(providerForModel(model))) {
-			return withModel(primary, model);
+function pickAvailableRoute(routed, registry) {
+	for (let i = 0; i < routed.chain.length; i++) {
+		if (registry.isAvailable(routed.chain[i].id)) {
+			return withRoutePosition(routed, i);
 		}
 	}
 	return null;
 }
 
-function providerHost(providerId, env) {
-	return getProviderConfig(providerId, env).baseURL;
-}
-
-function pickRuntimeFallback(primary, registry, env) {
-	const failedHost = providerHost(primary.provider, env);
-	const candidates = [
-		primary.fallbackModel,
-		AI_MODELS.MINIMAX_M3,
-		AI_MODELS.HY3,
-		AI_MODELS.MIMO_V25,
-	];
-	const seen = new Set([primary.model]);
-	for (const model of candidates) {
-		if (!model || seen.has(model)) continue;
-		seen.add(model);
-		const provider = providerForModel(model);
-		if (!registry.isAvailable(provider)) continue;
-		if (providerHost(provider, env) === failedHost) continue;
-		return withModel(primary, model);
+/** Runtime fallback: next candidates, skipping unavailable models and hosts that already failed. */
+function pickRuntimeFallback(failed, registry) {
+	for (let i = 0; i < failed.chain.length; i++) {
+		const candidate = failed.chain[i];
+		if (candidate.id === failed.model) continue;
+		if (candidate.host === failed.host) continue;
+		if (!registry.isAvailable(candidate.id)) continue;
+		return withRoutePosition(failed, i);
 	}
 	return null;
 }
 
-async function attemptWithFallback(primary, run, { registry, env }) {
+async function attemptWithFallback(primary, run, { registry }) {
 	try {
 		const result = await run(primary);
 		return { result, finalRoute: primary, fallbackUsed: false, fallbackReason: null, primary };
 	} catch (err) {
 		if (!isRetryableProviderError(err)) throw err;
-		const finalRoute = pickRuntimeFallback(primary, registry, env);
+		const finalRoute = pickRuntimeFallback(primary, registry);
 		if (!finalRoute) throw err;
 		logGateway({
 			event: "fallback",
@@ -150,7 +132,7 @@ export async function executeChat({
 	clientUa,
 	registry,
 }) {
-	const providers = registry || createProviderRegistry(env);
+	const providers = registry || (await createProviderRegistry(env));
 	if (!providers.hasAny()) {
 		return Response.json(
 			{ error: "Server not configured: no AI provider API keys" },
@@ -167,7 +149,7 @@ export async function executeChat({
 		estimatedInputTokens: normalized.estimatedInputTokens,
 		messageCount: normalized.messageCount,
 		plan,
-	});
+	}, providers.routeModels?.());
 	const primary = pickAvailableRoute(routed, providers);
 	if (!primary) {
 		return Response.json(
@@ -378,7 +360,7 @@ async function executeJson({
 		const attempted = await attemptWithFallback(
 			primary,
 			(route) => callProvider(providers, env, route, messages, false, undefined),
-			{ registry: providers, env },
+			{ registry: providers },
 		);
 		fallbackUsed = attempted.fallbackUsed;
 		fallbackReason = attempted.fallbackReason;
@@ -449,7 +431,7 @@ async function executeStream({
 		const attempted = await attemptWithFallback(
 			primary,
 			(route) => callProvider(providers, env, route, messages, true, request.signal),
-			{ registry: providers, env },
+			{ registry: providers },
 		);
 		fallbackUsed = attempted.fallbackUsed;
 		fallbackReason = attempted.fallbackReason;
@@ -536,5 +518,3 @@ async function executeStream({
 		},
 	});
 }
-
-export { providerForModel };

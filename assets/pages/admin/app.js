@@ -148,7 +148,7 @@ async function apiJson(method, path, body) {
 function switchTab(name) {
   document.querySelectorAll(".tab").forEach(t => t.classList.toggle("active", t.dataset.tab === name));
   document.querySelectorAll(".tab-content").forEach(c => c.classList.toggle("active", c.id === "tab-" + name));
-  const titles = { dashboard: "仪表盘", keys: "Key 管理", users: "用户管理", blacklist: "封禁用户", appeals: "申诉管理", tickets: "反馈工单", "ticket-archive": "已处理归档", contributions: "代码贡献审核", pricing: "积分计价", logs: "请求日志" };
+  const titles = { dashboard: "仪表盘", keys: "Key 管理", users: "用户管理", blacklist: "封禁用户", appeals: "申诉管理", tickets: "反馈工单", "ticket-archive": "已处理归档", contributions: "代码贡献审核", pricing: "积分计价", models: "模型管理", logs: "请求日志" };
   const title = document.getElementById("pageTitle");
   if (title) title.textContent = titles[name] || "管理后台";
   const sidebar = document.getElementById("sidebar");
@@ -162,6 +162,7 @@ function switchTab(name) {
   else if (name === "ticket-archive") loadTicketArchive();
   else if (name === "contributions") loadContributions();
   else if (name === "pricing") loadPricing();
+  else if (name === "models") loadModels();
 }
 
 function toggleSidebar() {
@@ -1025,6 +1026,225 @@ async function restorePricing() {
     await apiJson("POST", "/api/admin/pricing/restore", {});
     showToast("已恢复默认计价", "success");
     loadPricing();
+  } catch (err) {
+    showToast(err.message, "error");
+  }
+}
+
+// ── Model Management（动态模型管理）──
+const PURPOSE_LABELS = { light: "轻量快速", chat: "标准对话", reasoning: "深度推理", vision: "视觉理解" };
+const CAP_LABELS = { streaming: "流式", thinking: "思考", vision: "视觉" };
+
+async function loadModels() {
+  const container = document.getElementById("modelsTableContainer");
+  container.innerHTML = '<p class="empty-state">加载中...</p>';
+  try {
+    const { data } = await apiJson("GET", "/api/admin/models");
+    window._modelData = {};
+    (data.models || []).forEach(m => { window._modelData[m.id] = m; });
+    window._modelMeta = data;
+    if (!(data.models || []).length) {
+      container.innerHTML = '<p class="empty-state">暂无模型</p>';
+      return;
+    }
+    container.innerHTML = renderModelsTable(data.models);
+  } catch (e) {
+    container.innerHTML = '<p class="empty-state error-text">加载失败: ' + escapeHtml(e.message) + '</p>';
+  }
+}
+
+function renderModelsTable(models) {
+  const rows = models.map(m => {
+    const enabledBadge = m.enabled
+      ? '<span class="status-badge status-enabled">启用</span>'
+      : '<span class="status-badge status-disabled">已禁用</span>';
+    const keyBadge = m.keySource === "encrypted"
+      ? '<span class="status-badge status-enabled">已加密存储' + (m.keyHint ? ' ' + escapeHtml(m.keyHint) : '') + '</span>'
+      : m.keySource && m.keySource.startsWith("env:")
+        ? '<span class="status-badge" style="background:#fef3c7;color:#92400e">环境变量 ' + escapeHtml(m.keySource.slice(4)) + '</span>'
+        : '<span class="status-badge status-disabled">未配置</span>';
+    const purposeBadges = (m.purposes || []).map(p => '<span class="status-badge" style="background:#e0e7ff;color:#3730a3">' + (PURPOSE_LABELS[p] || p) + '</span>').join(" ") || '-';
+    const capBadges = Object.keys(CAP_LABELS).filter(c => m.capabilities && m.capabilities[c])
+      .map(c => '<span class="status-badge" style="background:#f1f5f9;color:#475569">' + CAP_LABELS[c] + '</span>').join(" ") || '-';
+    const protocolLabel = ((window._modelMeta || {}).protocols || []).find(p => p.id === m.provider)?.label || m.provider;
+    const rates = m.rates;
+    const ratesText = rates
+      ? '入 ' + rates.input + ' / 出 ' + rates.output + ' / 思 ' + rates.reasoning + ' / 缓 ' + rates.cache + ' ×' + rates.multiplier
+      : '-';
+    return '<tr>' +
+      '<td>' + enabledBadge + '</td>' +
+      '<td><strong>' + escapeHtml(m.displayName) + '</strong><br><small>' + escapeHtml(m.id) + '</small></td>' +
+      '<td>' + escapeHtml(protocolLabel) + '</td>' +
+      '<td>' + escapeHtml(m.upstreamModel) + '</td>' +
+      '<td>' + purposeBadges + '</td>' +
+      '<td>' + capBadges + '</td>' +
+      '<td>' + m.priority + '</td>' +
+      '<td>' + (m.minPlan === "free" ? "Free+" : m.minPlan === "plus" ? "Plus+" : "Pro") + '</td>' +
+      '<td>' + escapeHtml(ratesText) + '</td>' +
+      '<td>' + keyBadge + '</td>' +
+      '<td>' + formatDate(m.updatedAt) + '</td>' +
+      '<td class="actions-cell">' +
+        '<button class="btn btn-sm btn-outline" onclick="showModelModal(\'' + escapeHtml(m.id) + '\')">编辑</button>' +
+        '<button class="btn btn-sm btn-outline" onclick="testModel(\'' + escapeHtml(m.id) + '\')">测试</button>' +
+        '<button class="btn btn-sm ' + (m.enabled ? 'btn-danger' : 'btn-primary') + '" onclick="toggleModelEnabled(\'' + escapeHtml(m.id) + '\')">' + (m.enabled ? '禁用' : '启用') + '</button>' +
+      '</td>' +
+    '</tr>';
+  }).join("");
+
+  return '<table><thead><tr>' +
+    '<th>状态</th><th>模型</th><th>协议</th><th>上游 Model ID</th><th>路由用途</th><th>能力</th>' +
+    '<th>优先级</th><th>会员</th><th>积分系数(毫积分)</th><th>API Key</th><th>更新时间</th><th>操作</th>' +
+  '</tr></thead><tbody>' + rows + '</tbody></table>';
+}
+
+function ensureModelMeta() {
+  if (window._modelMeta) return Promise.resolve(window._modelMeta);
+  return apiJson("GET", "/api/admin/models").then(({ data }) => {
+    window._modelMeta = data;
+    return data;
+  });
+}
+
+async function showModelModal(id) {
+  const meta = await ensureModelMeta();
+  const form = document.getElementById("formModel");
+  form.reset();
+  form.id.value = "";
+
+  // 协议下拉与用途多选由服务端元数据驱动
+  const providerSelect = document.getElementById("modelProviderSelect");
+  providerSelect.innerHTML = (meta.protocols || []).map(p =>
+    '<option value="' + escapeHtml(p.id) + '">' + escapeHtml(p.label) + (p.description ? ' — ' + escapeHtml(p.description) : '') + '</option>'
+  ).join("");
+  document.getElementById("modelPurposeChecks").innerHTML = (meta.purposes || []).map(p =>
+    '<label class="check-item"><input type="checkbox" name="purpose_' + escapeHtml(p.id) + '"> ' + escapeHtml(p.label) + '</label>'
+  ).join("");
+
+  const isEdit = Boolean(id);
+  document.getElementById("modelModalTitle").textContent = isEdit ? "编辑模型" : "新增模型";
+  document.getElementById("modelInternalIdWrap").style.display = isEdit ? "none" : "";
+  document.getElementById("modelKeyHint").textContent = "";
+
+  if (isEdit) {
+    const m = (window._modelData || {})[id];
+    if (!m) { showToast("模型不存在", "error"); return; }
+    form.id.value = m.id;
+    form.display_name.value = m.displayName;
+    form.model_id.value = m.upstreamModel;
+    form.provider.value = m.provider;
+    form.base_url.value = m.baseURL;
+    form.auth_style.value = m.authStyle || "bearer";
+    form.context_length.value = m.contextLength || 0;
+    form.cap_streaming.checked = Boolean(m.capabilities && m.capabilities.streaming);
+    form.cap_thinking.checked = Boolean(m.capabilities && m.capabilities.thinking);
+    form.cap_vision.checked = Boolean(m.capabilities && m.capabilities.vision);
+    (m.purposes || []).forEach(p => { const box = form.querySelector('[name="purpose_' + p + '"]'); if (box) box.checked = true; });
+    form.priority.value = m.priority;
+    form.min_plan.value = m.minPlan || "free";
+    form.enabled.value = m.enabled ? "1" : "0";
+    if (m.rates) {
+      form.rate_input.value = m.rates.input;
+      form.rate_output.value = m.rates.output;
+      form.rate_reasoning.value = m.rates.reasoning;
+      form.rate_cache.value = m.rates.cache;
+      form.rate_multiplier.value = m.rates.multiplier;
+    }
+    form.extra_body.value = m.extraBody ? JSON.stringify(m.extraBody) : "";
+    const keyText = m.keySource === "encrypted"
+      ? "已有加密 Key" + (m.keyHint ? "（" + m.keyHint + "）" : "") + "，留空保持不变"
+      : m.keySource && m.keySource.startsWith("env:")
+        ? "当前使用环境变量 " + m.keySource.slice(4) + "，填写后将覆盖为加密存储"
+        : "尚未配置 Key";
+    document.getElementById("modelKeyHint").textContent = keyText;
+  }
+
+  document.getElementById("modal-model").style.display = "flex";
+}
+
+function collectModelForm(form) {
+  const purposes = (window._modelMeta?.purposes || []).map(p => p.id)
+    .filter(id => form.querySelector('[name="purpose_' + id + '"]')?.checked);
+  if (!purposes.length) return { error: "请至少选择一个路由用途" };
+  const body = {
+    display_name: form.display_name.value.trim(),
+    model_id: form.model_id.value.trim(),
+    provider: form.provider.value,
+    base_url: form.base_url.value.trim(),
+    auth_style: form.auth_style.value,
+    context_length: parseInt(form.context_length.value || "0", 10) || 0,
+    capabilities: {
+      streaming: form.cap_streaming.checked,
+      thinking: form.cap_thinking.checked,
+      vision: form.cap_vision.checked,
+    },
+    purposes,
+    priority: parseInt(form.priority.value || "100", 10) || 100,
+    min_plan: form.min_plan.value,
+    enabled: form.enabled.value === "1",
+    rates: {
+      input: Number(form.rate_input.value),
+      output: Number(form.rate_output.value),
+      reasoning: Number(form.rate_reasoning.value),
+      cache: Number(form.rate_cache.value),
+      multiplier: Number(form.rate_multiplier.value),
+    },
+  };
+  const apiKey = form.api_key.value;
+  if (apiKey) body.api_key = apiKey;
+  const extraBody = form.extra_body.value.trim();
+  if (extraBody) body.extra_body = extraBody;
+  if (!form.id.value) {
+    const internalId = form.internal_id ? form.internal_id.value.trim() : "";
+    if (internalId) body.internal_id = internalId;
+  }
+  return { body };
+}
+
+async function handleModelSubmit(e) {
+  e.preventDefault();
+  const form = e.target;
+  const collected = collectModelForm(form);
+  if (collected.error) { showToast(collected.error, "error"); return; }
+  const isEdit = Boolean(form.id.value);
+  try {
+    if (isEdit) {
+      await apiJson("POST", "/api/admin/models/update", { id: form.id.value, ...collected.body });
+      showToast("模型已更新，保存后即刻参与路由", "success");
+    } else {
+      await apiJson("POST", "/api/admin/models/create", collected.body);
+      showToast("模型已创建，即刻参与路由", "success");
+    }
+    closeModal("modal-model");
+    loadModels();
+  } catch (err) {
+    showToast("保存失败: " + err.message, "error");
+  }
+}
+
+async function toggleModelEnabled(id) {
+  const m = (window._modelData || {})[id];
+  if (!m) return;
+  const enable = !m.enabled;
+  if (!confirm((enable ? "启用" : "禁用") + ' "' + m.displayName + '"？禁用后该模型将立即退出路由候选池，进行中的请求不受影响。')) return;
+  try {
+    await apiJson("POST", "/api/admin/models/update", { id, enabled: enable });
+    showToast(enable ? "已启用" : "已禁用", "success");
+    loadModels();
+  } catch (e) {
+    showToast("操作失败: " + e.message, "error");
+  }
+}
+
+async function testModel(id) {
+  try {
+    showToast("测试中...", "info");
+    const res = await apiJson("POST", "/api/admin/models/test", { id });
+    if (res.success) {
+      const ms = res.data?.latencyMs != null ? res.data.latencyMs + "ms" : "";
+      showToast((res.data?.upstreamModel || id) + " 连通正常" + (ms ? " · " + ms : ""), "success");
+    } else {
+      showToast(res.error || "连通失败", "error");
+    }
   } catch (err) {
     showToast(err.message, "error");
   }

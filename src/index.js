@@ -49,7 +49,7 @@ import {
 	handleRefresh,
 } from "./auth/routes.js";
 import { CHAT_MAX_BODY_BYTES } from "./chat-limits.js";
-import { hasAnyProviderKey } from "./ai/models.js";
+import { hasAnyModelConfigured } from "./ai/model-config.js";
 import { executeChat } from "./ai/gateway.js";
 import { normalizeChatRequest, validateChatPayload } from "./chat/normalize.js";
 
@@ -562,7 +562,8 @@ async function handleChat(request, env, ctx) {
 		if (account?.status === "banned") return Response.json({ error: "Account banned" }, { status: 403 });
 	}
 
-	if (!hasAnyProviderKey(env)) {
+	// 配置检查涵盖 Worker secrets 与管理后台加密存储的模型 Key。
+	if (!(await hasAnyModelConfigured(env))) {
 		return Response.json(
 			{ error: "Server not configured: no AI provider API keys" },
 			{ status: 500 },

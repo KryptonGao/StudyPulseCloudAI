@@ -43,11 +43,13 @@ import { reviewContribution } from "../contributions/service.js";
 import { CURRENT_PRICING_VERSION } from "../billing/pricing.js";
 import {
 	listPricingRates,
+	listKnownModelIds,
 	restoreDefaultPricing,
 	upsertPricingRates,
 	validateModelRates,
 } from "../billing/store.js";
 import { testModelConnectivity } from "../ai/connectivity.js";
+import { createAdminModel, listAdminModels, updateAdminModel } from "./models.js";
 
 // ────────────────────────────────────────────────────────────────────────────
 // CSRF 保护
@@ -205,6 +207,22 @@ export async function handleAdminApi(request, env, pathname) {
 
 			case pathname === "/api/admin/pricing/test" && method === "POST":
 				return handleTestPricingModel(request, env);
+
+			// GET /api/admin/models — 动态模型管理
+			case pathname === "/api/admin/models" && method === "GET":
+				return handleListModels(env);
+
+			// POST /api/admin/models/create
+			case pathname === "/api/admin/models/create" && method === "POST":
+				return handleCreateModel(request, env);
+
+			// POST /api/admin/models/update
+			case pathname === "/api/admin/models/update" && method === "POST":
+				return handleUpdateModel(request, env);
+
+			// POST /api/admin/models/test
+			case pathname === "/api/admin/models/test" && method === "POST":
+				return handleTestModel(request, env);
 
 			// GET /api/admin/logs
 		case pathname === "/api/admin/logs" && method === "GET":
@@ -397,7 +415,8 @@ async function handleUpdatePricing(request, env) {
 	} catch {
 		return error("Invalid JSON body", 400);
 	}
-	const parsed = validateModelRates(body);
+	const knownIds = await listKnownModelIds(env);
+	const parsed = validateModelRates(body, knownIds);
 	if (parsed.error) return error(parsed.error, 400);
 	await upsertPricingRates(env, parsed.model, parsed.rates);
 	writeAdminLog(env, {
@@ -434,6 +453,67 @@ async function handleTestPricingModel(request, env) {
 		action: "test_model_connectivity",
 		details: JSON.stringify({
 			model: result.model || model,
+			ok: result.ok,
+			status: result.status,
+			latency_ms: result.latencyMs ?? null,
+			error: result.error || null,
+		}),
+	}).catch(() => {});
+	if (!result.ok && result.status === 400) {
+		return error(result.error, 400);
+	}
+	return json({ success: result.ok, error: result.error || undefined, data: result });
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// 动态模型管理路由处理
+// ────────────────────────────────────────────────────────────────────────────
+
+async function handleListModels(env) {
+	const data = await listAdminModels(env);
+	return json({ success: true, data });
+}
+
+async function handleCreateModel(request, env) {
+	let body;
+	try {
+		body = await request.json();
+	} catch {
+		return error("Invalid JSON body", 400);
+	}
+	const result = await createAdminModel(env, body);
+	if (result.error) return error(result.error, result.status || 400);
+	return json({ success: true, data: result.model });
+}
+
+async function handleUpdateModel(request, env) {
+	let body;
+	try {
+		body = await request.json();
+	} catch {
+		return error("Invalid JSON body", 400);
+	}
+	const { id, ...fields } = body || {};
+	const result = await updateAdminModel(env, id, fields);
+	if (result.error) return error(result.error, result.status || 400);
+	return json({ success: true, data: result.model });
+}
+
+async function handleTestModel(request, env) {
+	let body;
+	try {
+		body = await request.json();
+	} catch {
+		return error("Invalid JSON body", 400);
+	}
+	const id = typeof body?.id === "string" ? body.id.trim() : "";
+	if (!id) return error("id is required", 400);
+	const result = await testModelConnectivity(id, env);
+	writeAdminLog(env, {
+		admin_user_id: "admin_system",
+		action: "test_model_connectivity",
+		details: JSON.stringify({
+			model: result.model || id,
 			ok: result.ok,
 			status: result.status,
 			latency_ms: result.latencyMs ?? null,

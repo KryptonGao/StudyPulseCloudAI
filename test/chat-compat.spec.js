@@ -59,7 +59,15 @@ function failingAdapter(providerId, { status, retryable, message }) {
 }
 
 function registryOf(adapters) {
-	const byId = new Map(adapters.map((adapter) => [adapter.providerId, adapter]));
+	// Key adapters by both internal model id and provider id, mirroring the
+	// dynamic registry (per-model adapters) while keeping provider ids useful
+	// in assertions.
+	const modelKey = { mimo: "mimo-v2.5", hy3: "hy3", minimax: "minimax-m3" };
+	const byId = new Map();
+	for (const adapter of adapters) {
+		byId.set(adapter.providerId, adapter);
+		if (modelKey[adapter.providerId]) byId.set(modelKey[adapter.providerId], adapter);
+	}
 	return {
 		get: (id) => byId.get(id),
 		isAvailable: (id) => Boolean(byId.get(id)?.isAvailable()),
