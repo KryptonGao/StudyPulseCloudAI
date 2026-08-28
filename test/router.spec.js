@@ -127,7 +127,16 @@ describe("normalizeChatRequest", () => {
 		});
 		expect(normalized.caller).toBe("MistakeAI");
 		expect(normalized.requestedThinking).toBe("on");
+		expect(normalized.locale).toBe(null);
 		expect(normalized.messageCount).toBe(2);
+	});
+
+	it("reads studypulse.locale", () => {
+		const normalized = normalizeChatRequest({
+			message: "hi",
+			studypulse: { caller: "LLMChat", thinking: "auto", locale: "zh-Hans" },
+		});
+		expect(normalized.locale).toBe("zh-Hans");
 	});
 
 	it("treats invalid thinking as auto", () => {
