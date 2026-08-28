@@ -3,7 +3,7 @@ import { writeRequestLog } from "../admin/database.js";
 import { recordUsage } from "../membership/membership.js";
 import { calculatePoints } from "../billing/points.js";
 import { CURRENT_PRICING_VERSION } from "../billing/pricing.js";
-import { AI_MODELS } from "./models.js";
+import { AI_MODELS, getProviderConfig } from "./models.js";
 import { routeChat } from "./router.js";
 import { createProviderRegistry } from "../providers/registry.js";
 import { extractUsageFromSse, normalizeUsage } from "../providers/openai-compat.js";
@@ -12,6 +12,13 @@ import { getFallbackModel, providerForModel, reasoningEffortFor } from "./polici
 
 function logGateway(event) {
 	console.log("[ai-gateway]", JSON.stringify(event));
+}
+
+function providerFailureResponse(err) {
+	if (err?.status === 429) {
+		return Response.json({ error: "Rate limit exceeded" }, { status: 429 });
+	}
+	return Response.json({ error: "AI request failed" }, { status: 502 });
 }
 
 async function callProvider(registry, env, route, messages, stream, signal) {
@@ -72,13 +79,38 @@ function pickAvailableRoute(primary, registry) {
 	return null;
 }
 
-async function attemptWithFallback(primary, run) {
+function providerHost(providerId, env) {
+	return getProviderConfig(providerId, env).baseURL;
+}
+
+function pickRuntimeFallback(primary, registry, env) {
+	const failedHost = providerHost(primary.provider, env);
+	const candidates = [
+		primary.fallbackModel,
+		AI_MODELS.MINIMAX_M3,
+		AI_MODELS.HY3,
+		AI_MODELS.MIMO_V25,
+	];
+	const seen = new Set([primary.model]);
+	for (const model of candidates) {
+		if (!model || seen.has(model)) continue;
+		seen.add(model);
+		const provider = providerForModel(model);
+		if (!registry.isAvailable(provider)) continue;
+		if (providerHost(provider, env) === failedHost) continue;
+		return withModel(primary, model);
+	}
+	return null;
+}
+
+async function attemptWithFallback(primary, run, { registry, env }) {
 	try {
 		const result = await run(primary);
 		return { result, finalRoute: primary, fallbackUsed: false, fallbackReason: null, primary };
 	} catch (err) {
 		if (!isRetryableProviderError(err)) throw err;
-		const finalRoute = withModel(primary, primary.fallbackModel);
+		const finalRoute = pickRuntimeFallback(primary, registry, env);
+		if (!finalRoute) throw err;
 		logGateway({
 			event: "fallback",
 			primary_model: primary.model,
@@ -332,8 +364,10 @@ async function executeJson({
 	let fallbackReason = null;
 	let finalRoute = primary;
 	try {
-		const attempted = await attemptWithFallback(primary, (route) =>
-			callProvider(providers, env, route, normalized.messages, false, undefined),
+		const attempted = await attemptWithFallback(
+			primary,
+			(route) => callProvider(providers, env, route, normalized.messages, false, undefined),
+			{ registry: providers, env },
 		);
 		fallbackUsed = attempted.fallbackUsed;
 		fallbackReason = attempted.fallbackReason;
@@ -379,7 +413,7 @@ async function executeJson({
 			clientUa,
 			err,
 		});
-		return Response.json({ error: "AI request failed" }, { status: 502 });
+		return providerFailureResponse(err);
 	}
 }
 
@@ -400,8 +434,10 @@ async function executeStream({
 	let finalRoute = primary;
 	let upstream;
 	try {
-		const attempted = await attemptWithFallback(primary, (route) =>
-			callProvider(providers, env, route, normalized.messages, true, request.signal),
+		const attempted = await attemptWithFallback(
+			primary,
+			(route) => callProvider(providers, env, route, normalized.messages, true, request.signal),
+			{ registry: providers, env },
 		);
 		fallbackUsed = attempted.fallbackUsed;
 		fallbackReason = attempted.fallbackReason;
@@ -426,7 +462,7 @@ async function executeStream({
 			clientUa,
 			err,
 		});
-		return Response.json({ error: "AI request failed" }, { status: 502 });
+		return providerFailureResponse(err);
 	}
 
 	let clientStream;
