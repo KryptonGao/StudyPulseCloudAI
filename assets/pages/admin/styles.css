@@ -11,5 +11,5 @@ button,input,select{font:inherit}button{cursor:pointer}button:focus-visible,inpu
 @media (max-width:900px){.trend-grid{grid-template-columns:1fr}}
 .user-sessions{margin-top:20px}.detail-section-heading{display:flex;justify-content:space-between;align-items:center;margin:18px 0 8px;font-weight:600}
 .expire-edit{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:5px}.expire-edit .input-sm{flex:1;min-width:0;width:100%;max-width:220px}
-.pricing-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}.pricing-card{display:flex;flex-direction:column;gap:14px}.pricing-fields{display:grid;gap:12px}.pricing-fields label{display:block;font-size:12px;color:var(--text-muted)}.pricing-fields .input{margin-top:5px}.pricing-preview{font-size:12px;color:var(--text-muted);line-height:1.6}.pricing-actions{margin-top:auto}
+.pricing-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}.pricing-card{display:flex;flex-direction:column;gap:14px}.pricing-fields{display:grid;gap:12px}.pricing-fields label{display:block;font-size:12px;color:var(--text-muted)}.pricing-fields .input{margin-top:5px}.pricing-preview{font-size:12px;color:var(--text-muted);line-height:1.6}.pricing-actions{margin-top:auto;display:flex;flex-wrap:wrap;gap:8px}
 @media (max-width:1100px){.pricing-grid{grid-template-columns:1fr}}

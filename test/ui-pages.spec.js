@@ -75,5 +75,8 @@ describe("static UI pages", () => {
 		expect(response.status).toBe(200);
 		expect(response.headers.get("Content-Type")).toContain("text/javascript");
 		expect(await response.text()).toContain("getAppReturnTo");
+
+		const adminApp = await page("admin.chenkai.space", "/pages/admin/app.js");
+		expect(await adminApp.text()).toContain("测试此模型连通性");
 	});
 });

@@ -558,4 +558,14 @@ describe("Admin API - 积分计价", () => {
 		});
 		expect(res.status).toBe(400);
 	});
+
+	it("连通性测试拒绝未知模型且不调用上游", async () => {
+		const res = await adminFetch("/api/admin/pricing/test", {
+			method: "POST",
+			csrfCookie: "test-csrf",
+			body: { model: "gpt-x" },
+		});
+		expect(res.status).toBe(400);
+		expect(await res.json()).toEqual({ error: "Unknown model" });
+	});
 });

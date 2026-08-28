@@ -47,6 +47,7 @@ import {
 	upsertPricingRates,
 	validateModelRates,
 } from "../billing/store.js";
+import { testModelConnectivity } from "../ai/connectivity.js";
 
 // ────────────────────────────────────────────────────────────────────────────
 // CSRF 保护
@@ -201,6 +202,9 @@ export async function handleAdminApi(request, env, pathname) {
 
 			case pathname === "/api/admin/pricing/restore" && method === "POST":
 				return handleRestorePricing(env);
+
+			case pathname === "/api/admin/pricing/test" && method === "POST":
+				return handleTestPricingModel(request, env);
 
 			// GET /api/admin/logs
 		case pathname === "/api/admin/logs" && method === "GET":
@@ -414,6 +418,32 @@ async function handleRestorePricing(env) {
 	}).catch(() => {});
 	const models = await listPricingRates(env);
 	return json({ success: true, data: { models } });
+}
+
+async function handleTestPricingModel(request, env) {
+	let body;
+	try {
+		body = await request.json();
+	} catch {
+		return error("Invalid JSON body", 400);
+	}
+	const model = typeof body?.model === "string" ? body.model.trim() : "";
+	const result = await testModelConnectivity(model, env);
+	writeAdminLog(env, {
+		admin_user_id: "admin_system",
+		action: "test_model_connectivity",
+		details: JSON.stringify({
+			model: result.model || model,
+			ok: result.ok,
+			status: result.status,
+			latency_ms: result.latencyMs ?? null,
+			error: result.error || null,
+		}),
+	}).catch(() => {});
+	if (!result.ok && result.status === 400) {
+		return error(result.error, 400);
+	}
+	return json({ success: result.ok, error: result.error || undefined, data: result });
 }
 
 async function handleListKeys(env) {
