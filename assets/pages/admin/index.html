@@ -28,6 +28,7 @@
       <button class="tab" data-tab="tickets"><span class="nav-icon">⚑</span><span>反馈工单</span></button>
       <button class="tab" data-tab="ticket-archive"><span class="nav-icon">↳</span><span>└ 已处理归档</span></button>
       <button class="tab" data-tab="contributions"><span class="nav-icon">✦</span><span>代码贡献</span></button>
+      <button class="tab" data-tab="pricing"><span class="nav-icon">¤</span><span>积分计价</span></button>
       <button class="tab" data-tab="logs"><span class="nav-icon">≡</span><span>请求日志</span></button>
     </nav>
     <div class="sidebar-footer">
@@ -157,6 +158,23 @@
     <div class="page-heading"><div><h2>代码贡献审核</h2><p>审核用户提交的 Fork、Issue 或 Pull Request，并发放免费会员权益。</p></div></div>
     <div class="toolbar"><button class="btn btn-outline" onclick="loadContributions()">刷新贡献</button><select id="contributionStatusFilter" class="input-sm" onchange="loadContributions()"><option value="pending">待审核</option><option value="approved">已通过</option><option value="rejected">已打回</option></select></div>
     <div id="contributionsTableContainer" class="table-container"><p class="empty-state">加载中...</p></div>
+  </section>
+
+  <section id="tab-pricing" class="tab-content">
+    <div class="page-heading">
+      <div>
+        <h2>积分计价</h2>
+        <p>按模型调整 Token 与积分的换算。1000 毫积分 = 1 用户积分，不足 1 分向上取整。已产生的历史用量不会按新比值重算。</p>
+      </div>
+      <div class="heading-actions">
+        <button class="btn btn-outline" onclick="loadPricing()">刷新</button>
+        <button class="btn btn-outline" onclick="restorePricing()">恢复默认</button>
+      </div>
+    </div>
+    <p class="filter-hint" id="pricingVersionHint" style="margin-bottom:16px">代码默认版本：加载中</p>
+    <div id="pricingGrid" class="pricing-grid">
+      <p class="empty-state">加载中...</p>
+    </div>
   </section>
 
   <section id="tab-logs" class="tab-content">

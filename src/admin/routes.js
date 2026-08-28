@@ -40,6 +40,13 @@ import {
 import { createBan, reviewAppeal, sendTransactionalEmail } from "../appeals/service.js";
 import { accountDeletionEmail } from "../email/templates.js";
 import { reviewContribution } from "../contributions/service.js";
+import { CURRENT_PRICING_VERSION } from "../billing/pricing.js";
+import {
+	listPricingRates,
+	restoreDefaultPricing,
+	upsertPricingRates,
+	validateModelRates,
+} from "../billing/store.js";
 
 // ────────────────────────────────────────────────────────────────────────────
 // CSRF 保护
@@ -185,6 +192,15 @@ export async function handleAdminApi(request, env, pathname) {
 			// POST /api/admin/keys/reset-quota
 			case pathname === "/api/admin/keys/reset-quota" && method === "POST":
 				return handleResetQuota(request, env);
+
+			case pathname === "/api/admin/pricing" && method === "GET":
+				return handleGetPricing(env);
+
+			case pathname === "/api/admin/pricing/update" && method === "POST":
+				return handleUpdatePricing(request, env);
+
+			case pathname === "/api/admin/pricing/restore" && method === "POST":
+				return handleRestorePricing(env);
 
 			// GET /api/admin/logs
 		case pathname === "/api/admin/logs" && method === "GET":
@@ -357,6 +373,47 @@ async function handleUsageTrend(request, env) {
 	if (!allowedRanges.includes(range)) return error("Invalid range", 400);
 	const trend = await getDashboardUsageTrend(env, range);
 	return json({ success: true, data: { range, points: trend } });
+}
+
+async function handleGetPricing(env) {
+	const models = await listPricingRates(env);
+	return json({
+		success: true,
+		data: {
+			version: CURRENT_PRICING_VERSION,
+			models,
+		},
+	});
+}
+
+async function handleUpdatePricing(request, env) {
+	let body;
+	try {
+		body = await request.json();
+	} catch {
+		return error("Invalid JSON body", 400);
+	}
+	const parsed = validateModelRates(body);
+	if (parsed.error) return error(parsed.error, 400);
+	await upsertPricingRates(env, parsed.model, parsed.rates);
+	writeAdminLog(env, {
+		admin_user_id: "admin_system",
+		action: "update_pricing",
+		details: JSON.stringify({ model: parsed.model, rates: parsed.rates }),
+	}).catch(() => {});
+	const models = await listPricingRates(env);
+	return json({ success: true, data: { models } });
+}
+
+async function handleRestorePricing(env) {
+	await restoreDefaultPricing(env);
+	writeAdminLog(env, {
+		admin_user_id: "admin_system",
+		action: "restore_pricing",
+		details: JSON.stringify({ version: CURRENT_PRICING_VERSION }),
+	}).catch(() => {});
+	const models = await listPricingRates(env);
+	return json({ success: true, data: { models } });
 }
 
 async function handleListKeys(env) {

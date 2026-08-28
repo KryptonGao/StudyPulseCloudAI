@@ -148,7 +148,7 @@ async function apiJson(method, path, body) {
 function switchTab(name) {
   document.querySelectorAll(".tab").forEach(t => t.classList.toggle("active", t.dataset.tab === name));
   document.querySelectorAll(".tab-content").forEach(c => c.classList.toggle("active", c.id === "tab-" + name));
-  const titles = { dashboard: "仪表盘", keys: "Key 管理", users: "用户管理", blacklist: "封禁用户", appeals: "申诉管理", tickets: "反馈工单", "ticket-archive": "已处理归档", contributions: "代码贡献审核", logs: "请求日志" };
+  const titles = { dashboard: "仪表盘", keys: "Key 管理", users: "用户管理", blacklist: "封禁用户", appeals: "申诉管理", tickets: "反馈工单", "ticket-archive": "已处理归档", contributions: "代码贡献审核", pricing: "积分计价", logs: "请求日志" };
   const title = document.getElementById("pageTitle");
   if (title) title.textContent = titles[name] || "管理后台";
   const sidebar = document.getElementById("sidebar");
@@ -161,6 +161,7 @@ function switchTab(name) {
   else if (name === "tickets") loadTickets();
   else if (name === "ticket-archive") loadTicketArchive();
   else if (name === "contributions") loadContributions();
+  else if (name === "pricing") loadPricing();
 }
 
 function toggleSidebar() {
@@ -937,6 +938,72 @@ function showConfirm(title, message, onOk) {
   okBtn.parentNode.replaceChild(newOk, okBtn);
   newOk.addEventListener("click", onOk);
   document.getElementById("modal-confirm").style.display = "flex";
+}
+
+// ── Pricing ──
+async function loadPricing() {
+  const grid = document.getElementById("pricingGrid");
+  const hint = document.getElementById("pricingVersionHint");
+  try {
+    const { data } = await apiJson("GET", "/api/admin/pricing");
+    if (hint) hint.textContent = "代码默认版本：" + (data.version || "-") + "。保存后立即对后续请求生效。";
+    grid.innerHTML = (data.models || []).map(renderPricingCard).join("") || '<p class="empty-state">没有可配置的模型</p>';
+  } catch (err) {
+    grid.innerHTML = '<p class="empty-state">' + escapeHtml(err.message) + "</p>";
+  }
+}
+
+function renderPricingCard(model) {
+  return (
+    '<form class="panel pricing-card" data-model="' + escapeHtml(model.model) + '" onsubmit="savePricing(event)">' +
+      "<div class=\"panel-heading\"><div><h3>" + escapeHtml(model.label) + "</h3><p>" + escapeHtml(model.model) + "</p></div></div>" +
+      '<div class="pricing-fields">' +
+        pricingField("input", "输入 Token 毫积分", model.input, model.tokensPerPoint.input) +
+        pricingField("output", "输出 Token 毫积分", model.output, model.tokensPerPoint.output) +
+        pricingField("reasoning", "思考 Token 毫积分", model.reasoning, model.tokensPerPoint.reasoning) +
+        pricingField("cache", "缓存 Token 毫积分", model.cache, model.tokensPerPoint.cache) +
+        '<label>模型倍率<input class="input" type="number" name="multiplier" min="1" max="1000" step="1" value="' + model.multiplier + '" required></label>' +
+      "</div>" +
+      '<p class="pricing-preview">预览：1000 输入 ≈ <strong>' + model.preview.input1000 + "</strong> 分 · 1000 输出 ≈ <strong>" + model.preview.output1000 + "</strong> 分 · 1000 入 + 500 出 ≈ <strong>" + model.preview.mixed + "</strong> 分</p>" +
+      '<div class="pricing-actions"><button type="submit" class="btn btn-primary">保存此模型</button></div>' +
+    "</form>"
+  );
+}
+
+function pricingField(name, label, value, tokensPerPoint) {
+  const ratio = tokensPerPoint ? " · 约 " + tokensPerPoint + " tokens / 1 分" : "";
+  return '<label>' + label + ratio + '<input class="input" type="number" name="' + name + '" min="0" max="1000000" step="1" value="' + value + '" required></label>';
+}
+
+async function savePricing(event) {
+  event.preventDefault();
+  const form = event.target;
+  const payload = {
+    model: form.dataset.model,
+    input: Number(form.input.value),
+    output: Number(form.output.value),
+    reasoning: Number(form.reasoning.value),
+    cache: Number(form.cache.value),
+    multiplier: Number(form.multiplier.value),
+  };
+  try {
+    await apiJson("POST", "/api/admin/pricing/update", payload);
+    showToast("已保存 " + payload.model, "success");
+    loadPricing();
+  } catch (err) {
+    showToast(err.message, "error");
+  }
+}
+
+async function restorePricing() {
+  if (!confirm("将三个模型恢复为代码默认比值？已产生的历史用量不会重算。")) return;
+  try {
+    await apiJson("POST", "/api/admin/pricing/restore", {});
+    showToast("已恢复默认计价", "success");
+    loadPricing();
+  } catch (err) {
+    showToast(err.message, "error");
+  }
 }
 
 // ── Toast ──

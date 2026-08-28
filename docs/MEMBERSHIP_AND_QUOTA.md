@@ -176,7 +176,7 @@ sequenceDiagram
       AND datetime(created_at) >= datetime(?)
    ```
    - 若 `total >= monthly_point_limit`，返回 `Monthly point limit exceeded`。
-   - `points = ceil(millipoints / 1000)`，系数在 `PRICING["2026-08-v1"]`。
+   - `points = ceil(millipoints / 1000)`。默认系数在 `PRICING["2026-08-v1"]`，运行时以 D1 `pricing_rates` 为准（管理后台「积分计价」按模型调整）。历史 `points_charged` 按请求当时的比值落账，不随后续改价重算。
 3. **失败不计用户积分**：鉴权失败、400/413、429、abort、最终失败的 502 不写 `usage_records`（或 `points_charged=0` 仅当 usage_missing 成功占位）。primary 失败的上游成本只进 `request_logs`。
 
 ---

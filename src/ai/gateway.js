@@ -3,6 +3,7 @@ import { writeRequestLog } from "../admin/database.js";
 import { recordUsage } from "../membership/membership.js";
 import { calculatePoints } from "../billing/points.js";
 import { CURRENT_PRICING_VERSION } from "../billing/pricing.js";
+import { getPricingTable } from "../billing/store.js";
 import { AI_MODELS, getProviderConfig } from "./models.js";
 import { routeChat } from "./router.js";
 import { createProviderRegistry } from "../providers/registry.js";
@@ -221,8 +222,9 @@ export async function executeChat({
 	});
 }
 
-function usageToLedger(usage, model, extra = {}) {
+async function usageToLedger(env, usage, model, extra = {}) {
 	const normalized = usage?.missing ? normalizeUsage(null) : (usage || normalizeUsage(null));
+	const table = await getPricingTable(env);
 	const pointsCharged = normalized.missing
 		? 0
 		: calculatePoints({
@@ -231,7 +233,7 @@ function usageToLedger(usage, model, extra = {}) {
 			outputTokens: normalized.completion_tokens,
 			reasoningTokens: normalized.reasoning_tokens,
 			cachedInputTokens: normalized.cached_tokens,
-			pricingVersion: CURRENT_PRICING_VERSION,
+			table,
 		});
 	return {
 		input_tokens: normalized.prompt_tokens,
@@ -260,7 +262,7 @@ async function persistSuccess({
 	status = 200,
 	errorMessage = null,
 }) {
-	const ledger = usageToLedger(usage, finalRoute.model);
+	const ledger = await usageToLedger(env, usage, finalRoute.model);
 	if (ledger.usage_missing && !errorMessage) {
 		errorMessage = "usage_missing";
 	}

@@ -34,6 +34,17 @@ describe("calculatePoints", () => {
 		expect(calculatePoints({ model: "hy3" })).toBe(0);
 	});
 
+	it("accepts a live rate table override", () => {
+		const doubled = calculatePoints({
+			model: "mimo-v2.5",
+			inputTokens: 1000,
+			table: {
+				"mimo-v2.5": { input: 20, output: 60, reasoning: 60, cache: 10, multiplier: 1 },
+			},
+		});
+		expect(doubled).toBe(20);
+	});
+
 	it("freezes historical pricing versions", () => {
 		const v1 = calculatePoints({
 			model: "hy3",
