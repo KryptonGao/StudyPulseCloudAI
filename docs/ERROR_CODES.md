@@ -96,7 +96,7 @@ HTTP/1.1 403 Forbidden
 | 403 | `Account banned` | 绑定用户已被封禁 |
 | 429 | `API quota exceeded` | API Key 配额已用尽 |
 | 429 | `Daily request limit exceeded` | 会员每日请求次数已用尽 |
-| 429 | `Monthly token limit exceeded` | 会员月 Token 配额已用尽 |
+| 429 | `Monthly point limit exceeded` | 会员月 AI Points 配额已用尽 |
 | 500 | `Server not configured: MINIMAX_API_KEY missing` | 服务端未配置上游 AI Key |
 | 502 | `AI request failed` | 上游 MiniMax 请求失败 |
 
