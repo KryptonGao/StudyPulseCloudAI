@@ -965,7 +965,7 @@ function renderPricingCard(model) {
         '<label>模型倍率<input class="input" type="number" name="multiplier" min="1" max="1000" step="1" value="' + model.multiplier + '" required></label>' +
       "</div>" +
       '<p class="pricing-preview">预览：1000 输入 ≈ <strong>' + model.preview.input1000 + "</strong> 分 · 1000 输出 ≈ <strong>" + model.preview.output1000 + "</strong> 分 · 1000 入 + 500 出 ≈ <strong>" + model.preview.mixed + "</strong> 分</p>" +
-      '<div class="pricing-actions"><button type="submit" class="btn btn-primary">保存此模型</button></div>' +
+      '<div class="pricing-actions"><button type="submit" class="btn btn-primary">保存此模型</button><button type="button" class="btn btn-outline" onclick="testPricingModel(event)">测试此模型连通性</button></div>' +
     "</form>"
   );
 }
@@ -992,6 +992,30 @@ async function savePricing(event) {
     loadPricing();
   } catch (err) {
     showToast(err.message, "error");
+  }
+}
+
+async function testPricingModel(event) {
+  const form = event.target.closest("form");
+  const model = form?.dataset.model;
+  const button = event.target;
+  if (!model) return;
+  button.disabled = true;
+  const original = button.textContent;
+  button.textContent = "测试中...";
+  try {
+    const res = await apiJson("POST", "/api/admin/pricing/test", { model });
+    if (res.success) {
+      const ms = res.data?.latencyMs != null ? res.data.latencyMs + "ms" : "";
+      showToast((res.data?.upstreamModel || model) + " 连通正常" + (ms ? " · " + ms : ""), "success");
+    } else {
+      showToast(res.error || "连通失败", "error");
+    }
+  } catch (err) {
+    showToast(err.message, "error");
+  } finally {
+    button.disabled = false;
+    button.textContent = original;
   }
 }
 
