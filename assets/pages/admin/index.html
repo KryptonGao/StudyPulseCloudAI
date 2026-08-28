@@ -29,6 +29,7 @@
       <button class="tab" data-tab="ticket-archive"><span class="nav-icon">↳</span><span>└ 已处理归档</span></button>
       <button class="tab" data-tab="contributions"><span class="nav-icon">✦</span><span>代码贡献</span></button>
       <button class="tab" data-tab="pricing"><span class="nav-icon">¤</span><span>积分计价</span></button>
+      <button class="tab" data-tab="models"><span class="nav-icon">◈</span><span>模型管理</span></button>
       <button class="tab" data-tab="logs"><span class="nav-icon">≡</span><span>请求日志</span></button>
     </nav>
     <div class="sidebar-footer">
@@ -177,6 +178,23 @@
     </div>
   </section>
 
+  <section id="tab-models" class="tab-content">
+    <div class="page-heading">
+      <div>
+        <h2>模型管理</h2>
+        <p>新增、编辑、禁用路由模型。保存后无需重新部署即可参与路由：Caller 按用途类别在候选池中依据能力、优先级与可用状态自动选择 Primary/Fallback。</p>
+      </div>
+      <div class="heading-actions">
+        <button class="btn btn-primary" onclick="showModelModal()">+ 新增模型</button>
+        <button class="btn btn-outline" onclick="loadModels()">刷新</button>
+      </div>
+    </div>
+    <p class="filter-hint" style="margin-bottom:14px">用途：Caller 只映射到用途类别；新增符合用途的模型会自动进入对应路由候选池。优先级数字越小越优先。API Key 加密存储，不会明文写入数据库。</p>
+    <div id="modelsTableContainer" class="table-container">
+      <p class="empty-state">加载中...</p>
+    </div>
+  </section>
+
   <section id="tab-logs" class="tab-content">
     <div class="page-heading"><div><h2>请求日志</h2><p>筛选最近的 API 调用、响应状态和性能信息。</p></div></div>
     <div class="toolbar filter-toolbar">
@@ -200,6 +218,98 @@
     </div>
   </section>
 </main>
+</div>
+
+<!-- 新增/编辑模型模态框 -->
+<div id="modal-model" class="modal-overlay" style="display:none">
+  <div class="modal modal-lg">
+    <h3 id="modelModalTitle">新增模型</h3>
+    <form id="formModel" onsubmit="handleModelSubmit(event)">
+      <input type="hidden" name="id">
+      <div class="form-grid">
+        <div>
+          <label>显示名 *</label>
+          <input type="text" name="display_name" class="input" required placeholder="例如：DeepSeek V3">
+        </div>
+        <div>
+          <label>Model ID（上游模型名）*</label>
+          <input type="text" name="model_id" class="input" required placeholder="例如：deepseek-chat">
+        </div>
+        <div id="modelInternalIdWrap">
+          <label>内部 ID（留空自动生成）</label>
+          <input type="text" name="internal_id" class="input" placeholder="例如：deepseek-v3，仅小写字母/数字/./-/_">
+        </div>
+        <div>
+          <label>协议类型 *</label>
+          <select name="provider" class="input" id="modelProviderSelect"></select>
+        </div>
+        <div>
+          <label>Base URL *</label>
+          <input type="url" name="base_url" class="input" required placeholder="https://api.example.com/v1">
+        </div>
+        <div>
+          <label>API Key（加密存储）</label>
+          <input type="password" name="api_key" class="input" autocomplete="new-password" placeholder="留空表示不修改 / 使用已有 Key">
+          <p class="text-muted" id="modelKeyHint" style="font-size:11px;margin-top:4px"></p>
+        </div>
+        <div>
+          <label>认证方式</label>
+          <select name="auth_style" class="input">
+            <option value="bearer">Bearer（Authorization 头）</option>
+            <option value="api-key">api-key 头</option>
+          </select>
+        </div>
+        <div>
+          <label>上下文长度（0 = 未设置）</label>
+          <input type="number" name="context_length" class="input" min="0" step="1" value="0">
+        </div>
+      </div>
+      <label>能力</label>
+      <div class="check-row">
+        <label class="check-item"><input type="checkbox" name="cap_streaming" checked> Streaming</label>
+        <label class="check-item"><input type="checkbox" name="cap_thinking"> Thinking</label>
+        <label class="check-item"><input type="checkbox" name="cap_vision"> Vision（图片）</label>
+      </div>
+      <label>路由用途 *（Caller 按用途路由，可多选）</label>
+      <div class="check-row" id="modelPurposeChecks"></div>
+      <div class="form-grid form-grid-3">
+        <div>
+          <label>优先级（越小越优先）</label>
+          <input type="number" name="priority" class="input" min="1" max="1000" step="1" value="100">
+        </div>
+        <div>
+          <label>最低会员等级</label>
+          <select name="min_plan" class="input">
+            <option value="free">Free 及以上</option>
+            <option value="plus">Plus 及以上</option>
+            <option value="pro">仅 Pro</option>
+          </select>
+        </div>
+        <div>
+          <label>启用状态</label>
+          <select name="enabled" class="input">
+            <option value="1">启用</option>
+            <option value="0">禁用</option>
+          </select>
+        </div>
+      </div>
+      <label>积分系数（毫积分 / Token，1000 毫积分 = 1 积分）</label>
+      <div class="form-grid form-grid-5">
+        <div><label class="sub-label">输入</label><input type="number" name="rate_input" class="input" min="0" step="1" value="10"></div>
+        <div><label class="sub-label">输出</label><input type="number" name="rate_output" class="input" min="0" step="1" value="30"></div>
+        <div><label class="sub-label">思考</label><input type="number" name="rate_reasoning" class="input" min="0" step="1" value="30"></div>
+        <div><label class="sub-label">缓存</label><input type="number" name="rate_cache" class="input" min="0" step="1" value="5"></div>
+        <div><label class="sub-label">倍率</label><input type="number" name="rate_multiplier" class="input" min="1" max="1000" step="1" value="1"></div>
+      </div>
+      <label>高级：附加请求体 extra_body（JSON，可选）</label>
+      <textarea name="extra_body" class="input" rows="3" placeholder='例如：{"temperature":0.3}' style="font-family:ui-monospace,monospace"></textarea>
+      <p class="text-muted" style="font-size:11px;margin-top:4px">会原样合并进 /chat/completions 请求体，可放置供应商私有参数；修改历史积分不会重算。</p>
+      <div class="modal-actions">
+        <button type="submit" class="btn btn-primary">保存</button>
+        <button type="button" class="btn btn-outline" onclick="closeModal('modal-model')">取消</button>
+      </div>
+    </form>
+  </div>
 </div>
 
 <!-- 创建 Key 模态框 -->

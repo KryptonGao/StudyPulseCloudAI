@@ -1,6 +1,4 @@
-import { knownModels } from "../billing/store.js";
-import { getProviderConfig } from "./models.js";
-import { providerForModel } from "./policies.js";
+import { resolveModelConfig } from "./model-config.js";
 import { createProviderRegistry } from "../providers/registry.js";
 
 const PING_TIMEOUT_MS = 15_000;
@@ -12,24 +10,28 @@ function sanitizeError(message) {
 		.slice(0, 240);
 }
 
-export async function testModelConnectivity(model, env, { registry, fetchImpl, now = Date.now } = {}) {
-	if (!knownModels().includes(model)) {
+/**
+ * Ping a model by internal id through its own adapter. Works for built-in
+ * models and admin-added dynamic models alike.
+ */
+export async function testModelConnectivity(modelId, env, { registry, fetchImpl, now = Date.now } = {}) {
+	const record = await resolveModelConfig(modelId, env);
+	if (!record) {
 		return { ok: false, status: 400, error: "Unknown model" };
 	}
 
-	const providerId = providerForModel(model);
-	const providers = registry || createProviderRegistry(env);
-	const adapter = providers.get(providerId);
-	const cfg = getProviderConfig(providerId, env);
+	const providers = registry || (await createProviderRegistry(env, [record]));
+	const adapter = providers.get(record.id);
+	const upstreamModel = record.upstreamModel;
 
 	if (!adapter || !adapter.isAvailable(env)) {
 		return {
 			ok: false,
 			status: 503,
-			model,
-			provider: providerId,
-			upstreamModel: cfg.model,
-			error: `${providerId} API key is not configured`,
+			model: record.id,
+			provider: record.provider,
+			upstreamModel,
+			error: `${record.provider} API key is not configured`,
 		};
 	}
 
@@ -52,9 +54,9 @@ export async function testModelConnectivity(model, env, { registry, fetchImpl, n
 		return {
 			ok: true,
 			status: 200,
-			model,
-			provider: providerId,
-			upstreamModel: result.upstreamModel || cfg.model,
+			model: record.id,
+			provider: record.provider,
+			upstreamModel: result.upstreamModel || upstreamModel,
 			latencyMs: now() - started,
 			replyPreview: String(result.reply || "").slice(0, 80),
 		};
@@ -63,9 +65,9 @@ export async function testModelConnectivity(model, env, { registry, fetchImpl, n
 			return {
 				ok: false,
 				status: 504,
-				model,
-				provider: providerId,
-				upstreamModel: cfg.model,
+				model: record.id,
+				provider: record.provider,
+				upstreamModel,
 				latencyMs: now() - started,
 				error: "Timed out after 15s",
 			};
@@ -73,9 +75,9 @@ export async function testModelConnectivity(model, env, { registry, fetchImpl, n
 		return {
 			ok: false,
 			status: err?.status && err.status >= 400 ? err.status : 502,
-			model,
-			provider: providerId,
-			upstreamModel: cfg.model,
+			model: record.id,
+			provider: record.provider,
+			upstreamModel,
 			latencyMs: now() - started,
 			error: sanitizeError(err?.message),
 		};
