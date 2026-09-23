@@ -171,13 +171,15 @@ X-API-Key: sp_beta_<hex>
 - `POST /auth/login/password`：`{ email, password }`
 - `POST /auth/send-code`：`{ email }`，验证码有效 10 分钟且服务端仅保存验证码哈希
 - `POST /auth/login/code`：`{ email, code }`，邮箱不存在时自动创建用户
+- `POST /auth/authorize`：登录页内部使用，接收已认证会话及 `response_type=code`、`state`、`code_challenge`、`code_challenge_method=S256`、`redirect_uri`，签发绑定 PKCE 的一次性授权码
+- `POST /auth/token`：`{ grant_type: "authorization_code", code, code_verifier, redirect_uri }`，原生客户端交换 StudyPulse Session
 - `POST /auth/refresh`：`{ refresh_token }`，refresh token 单次轮换
 - `GET /oauth/github/start?return_to=studypulse://auth/callback`
 - `GET /oauth/github/callback`
 - `GET /oauth/google/start?return_to=studypulse://auth/callback`
 - `GET /oauth/google/callback`
 
-密码、验证码及 GitHub / Google 登录返回同一 Session 结构：`access_token`、`refresh_token`、`expires_at`、`refresh_expires_at` 和 `user`。OAuth state 存在 HttpOnly/Secure cookie 中用于 CSRF 防护；Google 只在邮箱已验证时按邮箱关联账号，并以 Google `sub` 作为稳定身份键。
+密码、验证码及 GitHub / Google 登录最终返回同一 Session 结构：`access_token`、`refresh_token`、`expires_at`、`refresh_expires_at` 和 `user`。网页登录通过受信任的 `return_to` 交付 Session；原生客户端使用一次性授权码和 PKCE，回调携带 `code` 与 `state`，然后调用 `/auth/token`。OAuth state 存在 HttpOnly/Secure cookie 中用于 CSRF 防护；Google 只在邮箱已验证时按邮箱关联账号，并以 Google `sub` 作为稳定身份键。
 
 密码认证与邮箱验证码、Session、API Key 共用同一个 `users.id`，不会产生第二套会员、额度或使用记录体系。
 

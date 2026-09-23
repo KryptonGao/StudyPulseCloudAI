@@ -47,6 +47,8 @@ import {
 	handleMe,
 	handleCodeLogin,
 	handleRefresh,
+	handleAuthorizationCodeIssue,
+	handleAuthorizationCodeExchange,
 } from "./auth/routes.js";
 import { CHAT_MAX_BODY_BYTES } from "./chat-limits.js";
 import { hasAnyModelConfigured } from "./ai/model-config.js";
@@ -329,6 +331,8 @@ function handlePublicApi(request, env, ctx, pathname, method) {
 	if (pathname === "/auth/send-code" && method === "POST") return handleAuthSendCode(request, env);
 	if (pathname === "/auth/login/password" && method === "POST") return handlePasswordLogin(request, env);
 	if (pathname === "/auth/login/code" && method === "POST") return handleCodeLogin(request, env);
+	if (pathname === "/auth/authorize" && method === "POST") return handleAuthorizationCodeIssue(request, env);
+	if (pathname === "/auth/token" && method === "POST") return handleAuthorizationCodeExchange(request, env);
 	if (pathname === "/auth/password/set-after-code" && method === "POST") return handlePasswordSetupAfterCode(request, env);
 	if (pathname === "/v1/auth/password/set-after-code" && method === "POST") return handlePasswordSetupAfterCode(request, env);
 	if (pathname === "/auth/refresh" && method === "POST") return handleRefresh(request, env);
@@ -384,6 +388,8 @@ async function handleAuthCenter(request, env, pathname, method) {
 	if (pathname === "/auth/send-code" && method === "POST") return handleAuthSendCode(request, env);
 	if (pathname === "/auth/login/password" && method === "POST") return handlePasswordLogin(request, env);
 	if (pathname === "/auth/login/code" && method === "POST") return handleCodeLogin(request, env);
+	if (pathname === "/auth/authorize" && method === "POST") return handleAuthorizationCodeIssue(request, env);
+	if (pathname === "/auth/token" && method === "POST") return handleAuthorizationCodeExchange(request, env);
 	if (pathname === "/auth/password/set-after-code" && method === "POST") return handlePasswordSetupAfterCode(request, env);
 	if (pathname === "/auth/refresh" && method === "POST") return handleRefresh(request, env);
 	return Response.json({ error: "Not Found" }, { status: 404 });

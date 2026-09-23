@@ -123,7 +123,7 @@ Content-Type: application/json
 ### 启动 OAuth
 
 ```http
-GET https://auth.chenkai.space/oauth/github/start?return_to=studypulse://auth/callback
+GET https://auth.chenkai.space/oauth/github/start?return_to=studypulse://auth/callback&response_type=code&state={state}&code_challenge={challenge}&code_challenge_method=S256
 ```
 
 流程：
@@ -156,18 +156,20 @@ OAuth 请求使用随机 `state`，并通过 Secure、HttpOnly、SameSite cookie
 
 ### OAuth 回调成功结果
 
+原生客户端使用授权码 + PKCE，回调仅包含短期授权码和 state：
+
 ```text
-studypulse://auth/callback?access_token=...&refresh_token=...
+studypulse://auth/callback?code=...&state=...
 ```
 
-客户端应立即读取 token，并保存到 Keychain。
+客户端先验证 state，再用 `code_verifier` 向 `POST /auth/token` 交换 StudyPulse Session。授权码 5 分钟有效且只能交换一次。网页登录继续通过受信任的 `return_to` 获取 Session。
 
 ## 6. Google OAuth 登录
 
 ### 启动 OAuth
 
 ```http
-GET https://auth.chenkai.space/oauth/google/start?return_to=studypulse://auth/callback
+GET https://auth.chenkai.space/oauth/google/start?return_to=studypulse://auth/callback&response_type=code&state={state}&code_challenge={challenge}&code_challenge_method=S256
 ```
 
 Google 登录使用服务端授权码流程，只请求 `openid email profile`。Worker 通过 `state` cookie 防止 CSRF，并用 `nonce` 验证 ID Token；验证签名、issuer、audience 和有效期后，使用 Google `sub` 作为稳定提供方 ID。只有 `email_verified` 为真时，才允许用邮箱关联已有的 StudyPulse 用户；首次登录会创建普通免费用户。成功后签发 StudyPulse Session，不保存 Google Access Token 或 Refresh Token。
@@ -184,7 +186,22 @@ https://auth.chenkai.space/oauth/google/callback
 http://localhost:8787/oauth/google/callback
 ```
 
-Google Client Secret 只放在 Cloudflare Secret 或本地 `.dev.vars` 中，不写入仓库。客户端 token 仍按统一格式返回至 `return_to`。
+Google Client Secret 只放在 Cloudflare Secret 或本地 `.dev.vars` 中，不写入仓库。原生客户端采用和 GitHub 相同的授权码 + PKCE 回调与 token 交换流程；网页登录继续通过受信任的 `return_to` 获取 Session。
+
+### 原生授权码交换
+
+`POST /auth/authorize` 由已登录的登录页会话调用，签发与 state、PKCE challenge 及固定回调地址绑定的一次性授权码。原生客户端随后调用：
+
+```json
+{
+  "grant_type": "authorization_code",
+  "code": "ac_...",
+  "code_verifier": "...",
+  "redirect_uri": "studypulse://auth/callback"
+}
+```
+
+成功响应为统一 Session 结构。授权码哈希、PKCE challenge 和过期时间保存在 D1；明文授权码只返回给发起登录的客户端。
 
 ## 7. 统一 Session
 

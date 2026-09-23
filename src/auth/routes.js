@@ -27,6 +27,12 @@ import {
 } from "../security/rateLimit.js";
 import { sha256Hex } from "../auth.js";
 import { consumeAuthChallenge, createAuthChallenge, getAuthChallenge } from "./challenges.js";
+import {
+	authorizationCallbackUrl,
+	consumeAuthorizationCode,
+	createAuthorizationCode,
+	parseAuthorizationCodeRequest,
+} from "./authorization-codes.js";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const GENERIC_RESET_MESSAGE = "如果该邮箱已注册，我们已经发送验证码";
@@ -391,6 +397,55 @@ export async function handleRefresh(request, env) {
 	const session = await refreshSession(parsed.body?.refresh_token, env);
 	if (!session) return fail("INVALID_REFRESH_TOKEN", "刷新令牌无效或已过期", 401);
 	const user = await getUserByIdFromSession(session, env);
+	return ok(sessionPayload(session, user));
+}
+
+export async function handleAuthorizationCodeIssue(request, env) {
+	const auth = await requireSessionAuth(request, env);
+	if (!auth.ok) return sessionAuthFailure(request, auth);
+	const parsed = await readJson(request);
+	if (parsed.error) return parsed.error;
+	const authorization = parseAuthorizationCodeRequest(parsed.body);
+	if (authorization.error) {
+		const messages = {
+			unsupported_response_type: "仅支持授权码登录",
+			invalid_redirect_uri: "回调地址无效",
+			invalid_state: "登录状态无效",
+			invalid_code_challenge: "PKCE 参数无效",
+		};
+		return fail("INVALID_AUTHORIZATION_REQUEST", messages[authorization.error] || "授权请求无效");
+	}
+	const user = await getUserById(auth.userId, env);
+	if (!user) return fail("UNAUTHORIZED", "用户不存在", 401);
+	if (user.status === "banned") return fail("ACCOUNT_BANNED", "账号已被暂停", 403);
+
+	const code = await createAuthorizationCode(user.id, authorization.request, env);
+	const redirectUri = authorizationCallbackUrl(authorization.request, code);
+	await revokeSessionById(auth.sessionId, env);
+	return ok({ redirect_uri: redirectUri });
+}
+
+export async function handleAuthorizationCodeExchange(request, env) {
+	const parsed = await readJson(request);
+	if (parsed.error) return parsed.error;
+	if (parsed.body?.grant_type !== "authorization_code") {
+		return fail("UNSUPPORTED_GRANT_TYPE", "仅支持 authorization_code", 400);
+	}
+	const authorization = await consumeAuthorizationCode(
+		parsed.body?.code,
+		parsed.body?.code_verifier,
+		parsed.body?.redirect_uri,
+		env,
+	);
+	if (!authorization) return fail("INVALID_GRANT", "授权码无效、已使用或已过期", 400);
+	const user = await getUserById(authorization.user_id, env);
+	if (!user) return fail("INVALID_GRANT", "授权用户不存在", 400);
+	if (user.status === "banned") return fail("ACCOUNT_BANNED", "账号已被暂停", 403);
+	const session = await createSessionWithMetadata(
+		user.id,
+		env,
+		await sessionMetadata(request, parsed.body?.device_name),
+	);
 	return ok(sessionPayload(session, user));
 }
 

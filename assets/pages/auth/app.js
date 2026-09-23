@@ -86,10 +86,37 @@ function getAppReturnTo() {
   return !value || /^studypulse:\/\/auth\/callback(?:\?.*)?$/.test(value) ? value || fallback : fallback;
 }
 
-function finishLogin(data) {
+async function finishLogin(data) {
+  const loginParams = new URLSearchParams(location.search);
+  if (loginParams.has("response_type")) {
+    try {
+      const state = loginParams.get("state") || "";
+      const codeChallenge = loginParams.get("code_challenge") || "";
+      if (loginParams.get("response_type") !== "code" || !state || !codeChallenge || loginParams.get("code_challenge_method") !== "S256") {
+        throw Error("安全登录参数无效，请重新开始登录");
+      }
+      const result = await authorizedRequest("/auth/authorize", data.access_token, {
+        response_type: "code",
+        state,
+        code_challenge: codeChallenge,
+        code_challenge_method: "S256",
+        redirect_uri: getAppReturnTo(),
+      });
+      const callback = new URL(result.data?.redirect_uri || "");
+      if (callback.protocol !== "studypulse:" || callback.host !== "auth" || callback.pathname !== "/callback" || callback.searchParams.get("state") !== state || !callback.searchParams.has("code")) {
+        throw Error("登录回调无效，请重新开始登录");
+      }
+      location.replace(callback.toString());
+    } catch (error) {
+      show(error.message || "安全登录失败，请重试", "error");
+    }
+    return;
+  }
   const returnTo = getAppReturnTo();
-  const params = new URLSearchParams({ access_token: data.access_token, refresh_token: data.refresh_token });
-  location.replace(returnTo + (returnTo.includes("?") ? "&" : "?") + params.toString());
+  const target = new URL(returnTo);
+  target.searchParams.set("access_token", data.access_token);
+  target.searchParams.set("refresh_token", data.refresh_token);
+  location.replace(target.toString());
 }
 
 async function offerPasskeySetup(data) {
@@ -227,10 +254,17 @@ getAppReturnTo = function () {
 };
 
 const oauthParams = new URLSearchParams(location.search);
-const hasOAuthReturnTarget = oauthParams.has("redirect") || oauthParams.has("return_to");
+const hasOAuthReturnTarget = oauthParams.has("redirect") || oauthParams.has("return_to") || oauthParams.has("response_type");
 document.querySelectorAll(".oauth-login").forEach((link) => {
   const startUrl = "/oauth/" + link.dataset.provider + "/start";
-  link.href = hasOAuthReturnTarget
-    ? startUrl + "?return_to=" + encodeURIComponent(getAppReturnTo())
-    : startUrl;
+  if (!hasOAuthReturnTarget) {
+    link.href = startUrl;
+    return;
+  }
+  const providerParams = new URLSearchParams({ return_to: getAppReturnTo() });
+  for (const key of ["response_type", "state", "code_challenge", "code_challenge_method"]) {
+    const value = oauthParams.get(key);
+    if (value) providerParams.set(key, value);
+  }
+  link.href = startUrl + "?" + providerParams.toString();
 });
