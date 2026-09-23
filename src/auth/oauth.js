@@ -1,11 +1,17 @@
 import { createSessionWithMetadata } from "./session.js";
-import { getUserByEmail } from "../users/users.js";
+import { getUserByEmail, getUserById } from "../users/users.js";
 import { sendVerificationCode, consumeVerificationCode } from "./email.js";
 import { consumeAuthChallenge, createAuthChallenge, getAuthChallenge } from "./challenges.js";
+import { createRemoteJWKSet, jwtVerify } from "jose";
 
 const GITHUB_CLIENT_ID = "Ov23lilABeGFN4QQdBHu";
 const CALLBACK = "https://auth.chenkai.space/oauth/github/callback";
 const COOKIE = "github_oauth_state";
+const GOOGLE_CALLBACK = "https://auth.chenkai.space/oauth/google/callback";
+const GOOGLE_COOKIE = "google_oauth_state";
+const GOOGLE_AUTHORIZE_URL = "https://accounts.google.com/o/oauth2/v2/auth";
+const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
+let googleJwksResolver;
 
 function randomToken(prefix) {
 	const bytes = new Uint8Array(32);
@@ -155,4 +161,164 @@ export async function handleGitHubBindVerify(request, env) {
 		.bind(crypto.randomUUID(), user.id, challenge.payload?.githubId || "", email, challenge.payload?.login || null, challenge.payload?.avatarUrl || null).run();
 	const session = await createSessionWithMetadata(user.id, env, { userAgent: request.headers.get("User-Agent") });
 	return Response.json({ success: true, data: { access_token: session.token, refresh_token: session.refreshToken, return_to: challenge.payload?.returnTo || "studypulse://auth/callback" } });
+}
+
+function readJsonCookie(request, name) {
+	const entry = (request.headers.get("Cookie") || "")
+		.split(";")
+		.map((part) => part.trim())
+		.find((part) => part.startsWith(`${name}=`));
+	if (!entry) return null;
+	try {
+		return JSON.parse(decodeURIComponent(entry.slice(name.length + 1)));
+	} catch {
+		return null;
+	}
+}
+
+function googleStateCookie(value, maxAge = 600) {
+	return `${GOOGLE_COOKIE}=${encodeURIComponent(JSON.stringify(value))}; Max-Age=${maxAge}; Path=/; HttpOnly; Secure; SameSite=Lax`;
+}
+
+function getGoogleJwks() {
+	if (!googleJwksResolver) {
+		googleJwksResolver = createRemoteJWKSet(new URL("https://www.googleapis.com/oauth2/v3/certs"));
+	}
+	return googleJwksResolver;
+}
+
+function redirectWithQuery(url, params) {
+	const target = new URL(url);
+	for (const [key, value] of Object.entries(params)) target.searchParams.set(key, value);
+	return target.toString();
+}
+
+function googleFailure(returnTo, error) {
+	return redirect(redirectWithQuery(returnTo, { error }), 302, {
+		"Set-Cookie": googleStateCookie("", 0),
+	});
+}
+
+export function handleGoogleStart(request, env) {
+	const url = new URL(request.url);
+	const returnTo = safeReturnTo(url.searchParams.get("return_to"));
+	if (!env.GOOGLE_CLIENT_ID || !env.GOOGLE_CLIENT_SECRET) {
+		return googleFailure(returnTo, "server_not_configured");
+	}
+
+	const state = randomToken("st_");
+	const nonce = randomToken("nonce_");
+	const authUrl = new URL(GOOGLE_AUTHORIZE_URL);
+	authUrl.searchParams.set("client_id", env.GOOGLE_CLIENT_ID);
+	authUrl.searchParams.set("redirect_uri", env.GOOGLE_CALLBACK_URL || GOOGLE_CALLBACK);
+	authUrl.searchParams.set("response_type", "code");
+	authUrl.searchParams.set("scope", "openid email profile");
+	authUrl.searchParams.set("state", state);
+	authUrl.searchParams.set("nonce", nonce);
+	return redirect(authUrl.toString(), 302, {
+		"Set-Cookie": googleStateCookie({ state, nonce, returnTo }),
+	});
+}
+
+export async function handleGoogleCallback(request, env) {
+	const url = new URL(request.url);
+	const state = url.searchParams.get("state");
+	const stateData = readJsonCookie(request, GOOGLE_COOKIE);
+	const returnTo = safeReturnTo(stateData?.returnTo);
+	if (!state || !stateData || state !== stateData.state) {
+		return googleFailure(returnTo, "invalid_state");
+	}
+	if (url.searchParams.has("error")) return googleFailure(returnTo, "google_denied");
+	if (!env.GOOGLE_CLIENT_ID || !env.GOOGLE_CLIENT_SECRET) {
+		return googleFailure(returnTo, "server_not_configured");
+	}
+	const code = url.searchParams.get("code");
+	if (!code) return googleFailure(returnTo, "google_token_exchange_failed");
+
+	try {
+		const tokenResponse = await fetch(GOOGLE_TOKEN_URL, {
+			method: "POST",
+			headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
+			body: new URLSearchParams({
+				code,
+				client_id: env.GOOGLE_CLIENT_ID,
+				client_secret: env.GOOGLE_CLIENT_SECRET,
+				redirect_uri: env.GOOGLE_CALLBACK_URL || GOOGLE_CALLBACK,
+				grant_type: "authorization_code",
+			}),
+		});
+		const tokens = await tokenResponse.json().catch(() => null);
+		if (!tokenResponse.ok || typeof tokens?.id_token !== "string") {
+			console.warn("Google OAuth token exchange rejected", { status: tokenResponse.status });
+			return googleFailure(returnTo, "google_token_exchange_failed");
+		}
+
+		const verified = await jwtVerify(tokens.id_token, getGoogleJwks(), {
+			issuer: ["https://accounts.google.com", "accounts.google.com"],
+			audience: env.GOOGLE_CLIENT_ID,
+			algorithms: ["RS256"],
+		});
+		const profile = verified.payload;
+		if (typeof profile.sub !== "string" || !profile.sub || profile.sub.length > 255 || profile.nonce !== stateData.nonce) {
+			return googleFailure(returnTo, "invalid_google_identity");
+		}
+		const email = typeof profile.email === "string" ? profile.email.trim().toLowerCase() : "";
+		const emailVerified = profile.email_verified === true || profile.email_verified === "true";
+		if (!emailVerified || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+			return googleFailure(returnTo, "google_email_required");
+		}
+
+		const db = env.StudyPulseDB;
+		const existingAccount = await db.prepare(
+			"SELECT user_id FROM user_oauth_accounts WHERE provider = 'google' AND provider_user_id = ?",
+		).bind(profile.sub).first();
+		let user = existingAccount
+			? await getUserById(existingAccount.user_id, env)
+			: await getUserByEmail(email, env);
+		if (!user) {
+			const userId = crypto.randomUUID();
+			const username = typeof profile.name === "string" ? profile.name.trim().slice(0, 200) || null : null;
+			const avatarUrl = typeof profile.picture === "string" ? profile.picture.slice(0, 2000) : null;
+			await db.prepare(
+				`INSERT OR IGNORE INTO users (id, email, email_normalized, email_verified, role, membership_type, username, avatar_url)
+				 VALUES (?, ?, ?, 1, 'user', 'free', ?, ?)`,
+			).bind(userId, email, email, username, avatarUrl).run();
+			user = await getUserByEmail(email, env);
+		}
+		if (!user) return googleFailure(returnTo, "google_account_failed");
+		if (user.status === "banned") return googleFailure(returnTo, "account_banned");
+
+		if (!existingAccount) {
+			const existingEmailAccount = await db.prepare(
+				"SELECT user_id FROM user_oauth_accounts WHERE provider = 'google' AND provider_email = ?",
+			).bind(email).first();
+			if (existingEmailAccount && existingEmailAccount.user_id !== user.id) {
+				return googleFailure(returnTo, "google_account_conflict");
+			}
+			const username = typeof profile.name === "string" ? profile.name.trim().slice(0, 200) || null : null;
+			const avatarUrl = typeof profile.picture === "string" ? profile.picture.slice(0, 2000) : null;
+			await db.prepare(
+				`INSERT OR IGNORE INTO user_oauth_accounts
+				 (id, user_id, provider, provider_user_id, provider_email, username, avatar_url)
+				 VALUES (?, ?, 'google', ?, ?, ?, ?)`,
+			).bind(crypto.randomUUID(), user.id, profile.sub, email, username, avatarUrl).run();
+			const linkedAccount = await db.prepare(
+				"SELECT user_id FROM user_oauth_accounts WHERE provider = 'google' AND provider_user_id = ?",
+			).bind(profile.sub).first();
+			if (!linkedAccount || linkedAccount.user_id !== user.id) {
+				return googleFailure(returnTo, "google_account_conflict");
+			}
+		}
+
+		const session = await createSessionWithMetadata(user.id, env, {
+			userAgent: request.headers.get("User-Agent"),
+		});
+		return redirect(redirectWithQuery(returnTo, {
+			access_token: session.token,
+			refresh_token: session.refreshToken,
+		}), 302, { "Set-Cookie": googleStateCookie("", 0) });
+	} catch (error) {
+		console.warn("Google OAuth callback failed", { code: error?.code || "unknown" });
+		return googleFailure(returnTo, "google_auth_failed");
+	}
 }

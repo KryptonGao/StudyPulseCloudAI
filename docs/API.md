@@ -166,7 +166,7 @@ X-API-Key: sp_beta_<hex>
 
 ### 4.4 统一身份中心（`auth.chenkai.space`）
 
-统一登录入口为 `https://auth.chenkai.space/login`，支持邮箱密码、邮箱验证码和 GitHub OAuth。新接口为：
+统一登录入口为 `https://auth.chenkai.space/login`，支持邮箱密码、邮箱验证码、GitHub OAuth 和 Google OAuth。新接口为：
 
 - `POST /auth/login/password`：`{ email, password }`
 - `POST /auth/send-code`：`{ email }`，验证码有效 10 分钟且服务端仅保存验证码哈希
@@ -174,8 +174,10 @@ X-API-Key: sp_beta_<hex>
 - `POST /auth/refresh`：`{ refresh_token }`，refresh token 单次轮换
 - `GET /oauth/github/start?return_to=studypulse://auth/callback`
 - `GET /oauth/github/callback`
+- `GET /oauth/google/start?return_to=studypulse://auth/callback`
+- `GET /oauth/google/callback`
 
-三种登录方式返回同一 Session 结构：`access_token`、`refresh_token`、`expires_at`、`refresh_expires_at` 和 `user`。GitHub 账号按 verified email 关联既有 `users`，没有可用邮箱时返回 `github_email_required`；OAuth state 存在 HttpOnly/Secure cookie 中用于 CSRF 防护。
+密码、验证码及 GitHub / Google 登录返回同一 Session 结构：`access_token`、`refresh_token`、`expires_at`、`refresh_expires_at` 和 `user`。OAuth state 存在 HttpOnly/Secure cookie 中用于 CSRF 防护；Google 只在邮箱已验证时按邮箱关联账号，并以 Google `sub` 作为稳定身份键。
 
 密码认证与邮箱验证码、Session、API Key 共用同一个 `users.id`，不会产生第二套会员、额度或使用记录体系。
 
@@ -977,7 +979,7 @@ Passkey 基于 WebAuthn，RP ID 为 `chenkai.space`。生产环境允许的 Orig
 
 ## 18. 配置、测试与发布
 
-必需 Secret 保持不变：`MINIMAX_API_KEY`、`RESEND_API_KEY`；新增 `GITHUB_CLIENT_SECRET`，管理员仍使用 `ADMIN_API_TOKEN`。GitHub Client ID 可作为公开配置，GitHub Secret 必须通过 Cloudflare Secret 注入，不能写入客户端或仓库。可选配置：`GITHUB_CLIENT_ID`、`GITHUB_CALLBACK_URL`、`PASSWORD_BCRYPT_COST`（默认 12）、`PASSKEY_RP_ID`、`PASSKEY_ALLOWED_ORIGINS`。
+必需 Secret 保持不变：`MINIMAX_API_KEY`、`RESEND_API_KEY`；OAuth 使用 `GITHUB_CLIENT_SECRET` 和 `GOOGLE_CLIENT_SECRET`，管理员仍使用 `ADMIN_API_TOKEN`。OAuth Client ID 可作为 Worker 环境变量配置；Client Secret 必须通过 Cloudflare Secret 注入，不能写入客户端或仓库。Google 默认回调地址为 `https://auth.chenkai.space/oauth/google/callback`。可选配置：`GITHUB_CLIENT_ID`、`GITHUB_CALLBACK_URL`、`GOOGLE_CLIENT_ID`、`GOOGLE_CALLBACK_URL`、`PASSWORD_BCRYPT_COST`（默认 12）、`PASSKEY_RP_ID`、`PASSKEY_ALLOWED_ORIGINS`。
 
 本地测试：
 

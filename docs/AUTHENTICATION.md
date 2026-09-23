@@ -8,13 +8,14 @@ StudyPulse 使用统一身份中心：
 https://auth.chenkai.space
 ```
 
-支持三种登录方式：
+支持以下登录方式：
 
 1. 邮箱 + 密码
 2. 邮箱验证码
 3. GitHub OAuth
+4. Google OAuth
 
-三种方式最终都关联到同一个 `users` 用户，并使用统一的 Session 系统。
+这些方式最终都关联到同一个 `users` 用户，并使用统一的 Session 系统。
 
 ## 2. 用户与登录方式
 
@@ -39,11 +40,11 @@ OAuth 账户独立保存：
 | 字段 | 说明 |
 | --- | --- |
 | `user_id` | 关联的 StudyPulse 用户 |
-| `provider` | 当前为 `github` |
-| `provider_user_id` | GitHub 用户 ID |
-| `provider_email` | GitHub verified email |
-| `username` | GitHub 用户名 |
-| `avatar_url` | GitHub 头像 |
+| `provider` | `github` 或 `google` |
+| `provider_user_id` | GitHub 用户 ID 或 Google `sub` |
+| `provider_email` | 提供方返回的已验证邮箱 |
+| `username` | 提供方用户名或显示名称 |
+| `avatar_url` | 提供方头像 |
 
 一个用户可以绑定多个 OAuth 账户。
 
@@ -161,7 +162,31 @@ studypulse://auth/callback?access_token=...&refresh_token=...
 
 客户端应立即读取 token，并保存到 Keychain。
 
-## 6. 统一 Session
+## 6. Google OAuth 登录
+
+### 启动 OAuth
+
+```http
+GET https://auth.chenkai.space/oauth/google/start?return_to=studypulse://auth/callback
+```
+
+Google 登录使用服务端授权码流程，只请求 `openid email profile`。Worker 通过 `state` cookie 防止 CSRF，并用 `nonce` 验证 ID Token；验证签名、issuer、audience 和有效期后，使用 Google `sub` 作为稳定提供方 ID。只有 `email_verified` 为真时，才允许用邮箱关联已有的 StudyPulse 用户；首次登录会创建普通免费用户。成功后签发 StudyPulse Session，不保存 Google Access Token 或 Refresh Token。
+
+生产回调地址：
+
+```text
+https://auth.chenkai.space/oauth/google/callback
+```
+
+本地开发回调地址：
+
+```text
+http://localhost:8787/oauth/google/callback
+```
+
+Google Client Secret 只放在 Cloudflare Secret 或本地 `.dev.vars` 中，不写入仓库。客户端 token 仍按统一格式返回至 `return_to`。
+
+## 7. 统一 Session
 
 登录成功返回：
 
@@ -204,7 +229,7 @@ Content-Type: application/json
 
 refresh token 为单次使用。刷新成功后旧 refresh token 立即失效，并返回一组新的 token。
 
-## 7. iOS 接入
+## 8. iOS 接入
 
 App 不再内置密码页面，改用：
 
@@ -227,7 +252,7 @@ App 需要：
 
 禁止将 token 保存到 `UserDefaults`。
 
-## 8. Cloudflare 配置
+## 9. Cloudflare 配置
 
 GitHub Client ID 可以公开配置；GitHub Secret 必须使用 Cloudflare Secret：
 
@@ -240,6 +265,8 @@ wrangler secret put GITHUB_CLIENT_SECRET
 ```text
 GITHUB_CLIENT_ID
 GITHUB_CALLBACK_URL
+GOOGLE_CLIENT_ID
+GOOGLE_CALLBACK_URL
 PASSWORD_BCRYPT_COST
 ```
 
@@ -249,9 +276,11 @@ PASSWORD_BCRYPT_COST
 https://auth.chenkai.space/oauth/github/callback
 ```
 
+Google OAuth 回调地址为 `https://auth.chenkai.space/oauth/google/callback`。`GOOGLE_CLIENT_SECRET` 必须通过 Cloudflare Secret 配置；`GOOGLE_CLIENT_ID` 可作为 Worker 环境变量配置。
+
 完成代码修改后，使用 `git commit` 和 `git push`，由 GitHub 集成触发部署。禁止本地执行 `wrangler deploy`。
 
-## 9. 相关接口
+## 10. 相关接口
 
 | 接口 | 用途 |
 | --- | --- |
@@ -262,6 +291,8 @@ https://auth.chenkai.space/oauth/github/callback
 | `POST /auth/refresh` | 刷新 Session |
 | `GET /oauth/github/start` | 启动 GitHub OAuth |
 | `GET /oauth/github/callback` | GitHub OAuth 回调 |
+| `GET /oauth/google/start` | 启动 Google OAuth |
+| `GET /oauth/google/callback` | Google OAuth 回调 |
 | `POST /v1/auth/logout` | 退出当前 Session |
 | `POST /v1/auth/logout-all` | 退出所有 Session |
 | `GET /v1/auth/me` | 获取当前用户 |

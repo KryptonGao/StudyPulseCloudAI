@@ -32,7 +32,7 @@
           </form>
           <form class="aux" id="setup"><p class="helper">该邮箱尚未设置密码，请先设置密码</p><input type="hidden" name="setup_token"><div class="field"><label>设置密码</label><input name="password" type="password" minlength="10" required placeholder="至少 10 个字符"></div><button class="submit">设置密码并登录</button></form>
           <form class="aux" id="reset"><p class="helper">输入邮箱并验证后即可重置密码</p><div class="field"><label>邮箱地址</label><input name="email" type="email" required placeholder="name@example.com"></div><div class="field"><label>验证码</label><div class="row"><input name="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" required placeholder="6 位验证码"><button class="send-code" type="button">获取验证码</button></div></div><div class="field"><label>新密码</label><input name="new_password" type="password" minlength="10" required placeholder="至少 10 个字符"></div><button class="submit">重置密码并登录</button></form>
-          <div class="divider">其他登录方式</div><a class="github" href="/oauth/github/start">使用 GitHub 登录</a>
+          <div class="divider">其他登录方式</div><a class="google oauth-login" data-provider="google" href="/oauth/google/start">使用 Google 登录</a><a class="github oauth-login" data-provider="github" href="/oauth/github/start">使用 GitHub 登录</a>
           <p class="message" id="message" role="status" aria-live="polite"></p>
         </section>
         <div class="copyright">登录即表示你同意 StudyPulse 的服务条款</div>

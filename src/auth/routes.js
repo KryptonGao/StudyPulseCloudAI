@@ -293,9 +293,15 @@ export async function handleMe(request, env) {
 	const user = await getUserById(auth.userId, env);
 	if (!user) return fail("UNAUTHORIZED", "用户不存在", 401);
 	const credential = await getCredentialByUserId(auth.userId, env);
+	const oauthAccounts = await env.StudyPulseDB.prepare(
+		"SELECT DISTINCT provider FROM user_oauth_accounts WHERE user_id = ?",
+	).bind(auth.userId).all();
+	const oauthLoginMethods = (oauthAccounts.results || [])
+		.map((account) => account.provider)
+		.filter((provider) => provider === "github" || provider === "google");
 	return ok({
 		user: { id: user.id, email: user.email },
-		login_methods: ["email_code", ...(credential ? ["password"] : [])],
+		login_methods: ["email_code", ...(credential ? ["password"] : []), ...oauthLoginMethods],
 		auth_type: auth.authType,
 	});
 }

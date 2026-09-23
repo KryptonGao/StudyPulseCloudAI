@@ -20,7 +20,7 @@ import { authenticateRequest } from "./auth/middleware.js";
 import { handleAdminApi } from "./admin/routes.js";
 import { sendVerificationCode, verifyCode } from "./auth/email.js";
 import { createSession, destroySession } from "./auth/session.js";
-import { handleGitHubBindSendCode, handleGitHubBindVerify, handleGitHubCallback, handleGitHubStart } from "./auth/oauth.js";
+import { handleGitHubBindSendCode, handleGitHubBindVerify, handleGitHubCallback, handleGitHubStart, handleGoogleCallback, handleGoogleStart } from "./auth/oauth.js";
 import { checkUserQuota, getMembershipPlan } from "./membership/membership.js";
 import { getUserById } from "./users/users.js";
 import { handleAppealStatus, handleSubmitAppeal } from "./appeals/routes.js";
@@ -136,6 +136,10 @@ export default {
 				hostname.startsWith("127.0.0.1") ||
 				hostname.endsWith(".workers.dev") ||
 				((env.LOCAL_DEV === "1" || env.LOCAL_DEV === "true") && hostname === SPAPI_HOSTNAME);
+			const isLocalAuthHost =
+				hostname === "localhost" ||
+				hostname.startsWith("127.0.0.1") ||
+				((env.LOCAL_DEV === "1" || env.LOCAL_DEV === "true") && hostname === SPAPI_HOSTNAME);
 
 			console.log(`[${method}] ${hostname}${pathname}`);
 
@@ -153,6 +157,8 @@ export default {
 			// 因此用 LOCAL_DEV / localhost 走路径路由，而不是按生产子域名分流。
 			if (usePathRouting) {
 				if (pathname === "/login" && method === "GET") return withCors(await serveStaticPage(request, env, "/pages/auth/index.html", authPageOptions()), request);
+				if (isLocalAuthHost && pathname === "/oauth/google/start" && method === "GET") return withCors(handleGoogleStart(request, env), request);
+				if (isLocalAuthHost && pathname === "/oauth/google/callback" && method === "GET") return withCors(await handleGoogleCallback(request, env), request);
 				if (pathname === "/support" && method === "GET") return withCors(await serveStaticPage(request, env, "/pages/support/index.html"), request);
 				if (pathname === "/oauth/github/bind" && method === "GET") return withCors(await serveStaticPage(request, env, "/pages/auth-bind/index.html", authPageOptions()), request);
 				if ((pathname === "/dashboard" || pathname === "/dashboard/" || pathname === "/contributions" || pathname === "/feedback" || pathname === "/security") && method === "GET") return withCors(await serveStaticPage(request, env, "/pages/dashboard/index.html"), request);
@@ -370,6 +376,8 @@ async function handleAuthCenter(request, env, pathname, method) {
 	if (isPasskeyRoute(pathname)) return handlePasskeyRoute(request, env, pathname);
 	if (pathname === "/oauth/github/start" && method === "GET") return handleGitHubStart(request, env);
 	if (pathname === "/oauth/github/callback" && method === "GET") return handleGitHubCallback(request, env);
+	if (pathname === "/oauth/google/start" && method === "GET") return handleGoogleStart(request, env);
+	if (pathname === "/oauth/google/callback" && method === "GET") return handleGoogleCallback(request, env);
 	if (pathname === "/oauth/github/bind" && method === "GET") return serveStaticPage(request, env, "/pages/auth-bind/index.html", authPageOptions());
 	if (pathname === "/oauth/github/bind/send-code" && method === "POST") return handleGitHubBindSendCode(request, env);
 	if (pathname === "/oauth/github/bind/verify" && method === "POST") return handleGitHubBindVerify(request, env);

@@ -226,6 +226,11 @@ getAppReturnTo = function () {
   return originalReturnTo();
 };
 
-const github = document.querySelector(".github");
-const redirect = new URLSearchParams(location.search).get("redirect");
-if (github && redirect) github.href = "/oauth/github/start?return_to=" + encodeURIComponent(getAppReturnTo());
+const oauthParams = new URLSearchParams(location.search);
+const hasOAuthReturnTarget = oauthParams.has("redirect") || oauthParams.has("return_to");
+document.querySelectorAll(".oauth-login").forEach((link) => {
+  const startUrl = "/oauth/" + link.dataset.provider + "/start";
+  link.href = hasOAuthReturnTarget
+    ? startUrl + "?return_to=" + encodeURIComponent(getAppReturnTo())
+    : startUrl;
+});

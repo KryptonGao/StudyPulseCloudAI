@@ -33,7 +33,7 @@ Cloudflare Workers 驱动的 AI 后端网关与统一身份中心，为 StudyPul
 - **多模态支持** — MiniMax-M3 原生支持文本、图片（JPEG/PNG/GIF/WEBP）、视频（MP4/AVI/MOV/MKV）输入
 - **流式响应 (SSE)** — 支持 `stream: true`，透传 MiniMax 流式输出，含用量提取和客户端断连检测
 - **SaaS 用户体系** — 邮箱验证码登录（Resend），Session Token 管理（30 天有效期），用户注册/角色/会员
-- **统一身份中心** — `auth.chenkai.space` 提供邮箱密码、邮箱验证码和 GitHub OAuth 登录，统一关联同一用户身份
+- **统一身份中心** — `auth.chenkai.space` 提供邮箱密码、邮箱验证码、GitHub OAuth 和 Google 登录，统一关联同一用户身份
 - **安全会话管理** — Access Token + Refresh Token、Session 撤销、退出全部设备、设备信息记录和登录限流
 - **密码认证** — 密码注册、修改、重置，bcrypt 哈希存储，兼容历史 PBKDF2 凭据并在成功登录后升级
 - **双鉴权** — Session Token 与 API Key 共存，统一 `authenticateRequest()` 中间件，支持 `X-API-Key` header
@@ -251,6 +251,9 @@ RESEND_API_KEY=re_your_resend_api_key
 # GitHub OAuth（统一身份中心必需）
 GITHUB_CLIENT_ID=your-github-oauth-client-id
 GITHUB_CLIENT_SECRET=your-github-oauth-client-secret
+GOOGLE_CLIENT_ID=your-google-oauth-client-id
+GOOGLE_CLIENT_SECRET=your-google-oauth-client-secret
+GOOGLE_CALLBACK_URL=http://localhost:8787/oauth/google/callback
 EOF
 
 # 4. 种子测试 API Key（本地）
@@ -325,6 +328,9 @@ npx wrangler secret put RESEND_API_KEY
 # GitHub OAuth（统一身份中心必需）
 npx wrangler secret put GITHUB_CLIENT_ID
 npx wrangler secret put GITHUB_CLIENT_SECRET
+
+# Google OAuth：在 Cloudflare 中将 Client ID 配置为 Worker 变量，Client Secret 配置为加密 Secret。
+# 生产回调地址默认是 https://auth.chenkai.space/oauth/google/callback
 ```
 
 > Secrets 由 Cloudflare 加密存储，仅运行时通过 `env` 注入，绝不写入代码或配置文件。
@@ -355,7 +361,7 @@ node scripts/create-api-key.js "iOS Beta 001" --remote
 | `spapi.chenkai.space` | 公开 AI API | CNAME → Worker `*.workers.dev` |
 | `admin.chenkai.space` | 管理后台 | CNAME → Worker `*.workers.dev` |
 | `support.chenkai.space` | 封禁账号申诉与反馈工单 | CNAME → Worker `*.workers.dev` |
-| `auth.chenkai.space` | 统一登录与 GitHub OAuth | CNAME → Worker `*.workers.dev` |
+| `auth.chenkai.space` | 统一登录与 GitHub / Google OAuth | CNAME → Worker `*.workers.dev` |
 | `dash.studypulse.chenkai.space` | 用户仪表盘、反馈与代码贡献 | CNAME → Worker `*.workers.dev` |
 
 ### 5. （可选）配置 Cloudflare Access
@@ -420,6 +426,8 @@ git push origin main
 | `GET` | `/v1/auth/me` | 获取当前用户和登录方式 |
 | `GET` | `/oauth/github/start` | 启动 GitHub OAuth |
 | `GET` | `/oauth/github/callback` | GitHub OAuth 回调与身份绑定 |
+| `GET` | `/oauth/google/start` | 启动 Google OAuth |
+| `GET` | `/oauth/google/callback` | Google OAuth 回调与身份绑定 |
 
 密码长度要求为 10–128 个 Unicode 字符。密码只保存哈希；历史 PBKDF2 凭据会在成功登录后升级为 bcrypt。完整流程见 [docs/AUTHENTICATION.md](docs/AUTHENTICATION.md)。
 
