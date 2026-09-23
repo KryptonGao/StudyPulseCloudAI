@@ -15,6 +15,7 @@
 		"nodejs_compat"
 	],
 	"vars": {
+		"GOOGLE_CLIENT_ID": "279217268837-s0kggeavk89ofmv7s3k6aoa1to565p9l.apps.googleusercontent.com",
 		"MINIMAX_BASE_URL": "https://api.minimaxi.com/v1",
 		"MINIMAX_MODEL": "MiniMax-M3",
 		"MIMO_BASE_URL": "https://opencode.ai/zen/v1",
